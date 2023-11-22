@@ -16,7 +16,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build ./image-lib --verbose
+    - name: Build Exe
+      run: cargo build --manifest-file ./rust-image-viewer/Cargo.toml --verbose
+    - name: Build Lib
+      run: cargo build --manifest-file ./image-lib/Cargo.toml --verbose
     - name: Run tests
-      run: cargo test ./image-lib --verbose
+      run: cargo test --manifest-file ./image-lib/Cargo.toml --verbose
