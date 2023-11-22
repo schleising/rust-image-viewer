@@ -108,20 +108,20 @@ mod tests {
     #[test]
     fn test_create_thumbnail_path() {
         // Create a path to a file which exists
-        let path = Path::new("../tests/test.jpg");
+        let path = Path::new("./tests/test.jpg");
 
         // Call the create_thumbnail_path function
         let thumbnail_path = create_thumbnail_path(&path).unwrap();
 
         // Check if the thumbnail path is correct
-        assert_eq!(thumbnail_path, Path::new("../tests/thumbnails"));
+        assert_eq!(thumbnail_path, Path::new("./tests/thumbnails"));
     }
 
     // Create a test for the create_thumbnail function where the parent path does not exist
     #[test]
     fn test_create_thumbnail_bad_parent_path() {
         // Create a path to a file which does not exist
-        let path = Path::new("../path_which_does_not_exist/test2.jpg");
+        let path = Path::new("./path_which_does_not_exist/test2.jpg");
 
         // Call the create_thumbnail_path function
         let thumbnail_path = create_thumbnail_path(&path);
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_create_thumbnail_bad_file_name() {
         // Create a path to a file which does not exist
-        let path = Path::new("../tests/");
+        let path = Path::new("./tests/");
 
         // Call the create_thumbnail_path function
         let thumbnail_path = create_thumbnail(&path);
@@ -147,12 +147,12 @@ mod tests {
     #[test]
     fn test_create_thumbnail_good_file_name() {
         // Create a path to a file which does not exist
-        let path = Path::new("../tests/th.jpeg");
+        let path = Path::new("./tests/th.jpeg");
 
         // Call the create_thumbnail function
         let thumbnail_path = create_thumbnail(&path).unwrap();
 
         //  Check the error text is correct
-        assert_eq!(thumbnail_path, Path::new("../tests/thumbnails/th.jpeg"));
+        assert_eq!(thumbnail_path, Path::new("./tests/thumbnails/th.jpeg"));
     }
 }
