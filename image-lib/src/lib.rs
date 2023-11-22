@@ -1,24 +1,44 @@
-use std::{error::Error, path::Path, path::PathBuf};
+use std::error::Error;
+use std::path::{Path, PathBuf};
+use std::io;
+
+// Create error type for NoParentPath, NoFileName and ParentPathDoesNotExist
+#[derive(Debug)]
+pub enum ImageError {
+    NoParentPath,
+    NoFileName,
+    ParentPathDoesNotExist,
+    InvalidFileExtension,
+}
+
+// Implement the Error trait for the ImageError type
+impl Error for ImageError {}
+
+// Implement the Display trait for the ImageError type
+impl std::fmt::Display for ImageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ImageError::NoParentPath => write!(f, "No parent path found"),
+            ImageError::NoFileName => write!(f, "No file name found"),
+            ImageError::ParentPathDoesNotExist => write!(f, "Parent path does not exist"),
+            ImageError::InvalidFileExtension => write!(f, "Invalid file extension"),
+        }
+    }
+}
+
+// Allowed file extensions
+const ALLOWED_FILE_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "gif"];
 
 // Function to create a thumbnial path from a given path
 // The function returns the path to the thumbnail
 fn create_thumbnail_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     // Create a variable to store the parent path
-    let parent_path: &Path;
-
-    // Get the parent path of the given path
-    match path.parent() {
-        Some(path) => parent_path = path,
-        None => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "No parent path found"))),
-    }
+    let parent_path: &Path = path.parent()
+        .ok_or_else(|| ImageError::NoParentPath)?;
 
     // Check if the parent path exists
     if !parent_path.exists() {
-        // Print an error message
-        println!("Parent path does not exist");
-
-        // Return an error
-        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "Parent path does not exist")));
+        return Err(Box::new(ImageError::ParentPathDoesNotExist));
     }
 
     // Add a new folder called thumbnails to the parent path
@@ -34,44 +54,47 @@ fn create_thumbnail_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
 // Function which takes a path to an image file and resizes it to a thnumbnail storing it in a new folder called thumbnails
 // The function returns the path to the thumbnail
 pub fn create_thumbnail(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    // Create a variable to store the thumbnail path
-    let thumbnail_path: PathBuf;
-
-    // Call the create_thumbnail_path function
-    match create_thumbnail_path(&path) {
-        Ok(path) => thumbnail_path = path,
-        Err(error) => return Err(error),
+    // Check if the path exists
+    if !path.exists() {
+        return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, "Path does not exist")));
     }
 
-    // Get the file name from the path
-    let file_name = match path.file_name() {
-        Some(file_name) => file_name,
-        None => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "No file name found"))),
+    // Check if the path is a file
+    if !path.is_file() {
+        return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, "Path is not a file")));
+    }
+
+    // Check if the file extension is allowed
+    match path.extension() {
+        Some(file_extension) => {
+            if !ALLOWED_FILE_EXTENSIONS.contains(&file_extension.to_str().unwrap()) {
+                return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, "File extension not allowed")));
+            }
+        },
+        None => return Err(Box::new(io::Error::new(io::ErrorKind::NotFound, "No file extension found"))),
     };
+
+    // Get the file name from the path
+    let file_name = path.file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No file name found"))?;
+
+    // Print the file name
+    println!("File name: {:?}", file_name);
+    
+    // Call the create_thumbnail_path function
+    let thumbnail_path = create_thumbnail_path(&path)?;
 
     // Join the thumbnail path with the file name
     let thumbnail_path_with_file_name = thumbnail_path.join(file_name);
 
-    // Create a variable to store the image
-    let image: image::DynamicImage;
-
     // Open the image
-    match image::open(&path) {
-        Ok(img) => image = img,
-        Err(error) => return Err(Box::new(error)),
-    }
-
-    // Create a variable to store the thumbnail
-    let thumbnail: image::DynamicImage;
+    let image = image::open(&path)?;
 
     // Resize the image to a thumbnail
-    thumbnail = image.thumbnail(256, 256);
+    let thumbnail = image.thumbnail(256, 256);
 
     // Save the thumbnail
-    match thumbnail.save(&thumbnail_path_with_file_name) {
-        Ok(_) => {},
-        Err(error) => return Err(Box::new(error)),
-    }
+    thumbnail.save(&thumbnail_path_with_file_name)?;
 
     // Return the thumbnail path as a string
     Ok(thumbnail_path_with_file_name)
@@ -111,25 +134,25 @@ mod tests {
     #[test]
     fn test_create_thumbnail_bad_file_name() {
         // Create a path to a file which does not exist
-        let path = Path::new("../tests/test2.jpg");
+        let path = Path::new("../tests/");
 
         // Call the create_thumbnail_path function
         let thumbnail_path = create_thumbnail(&path);
 
         //  Check the error text is correct
-        assert_eq!(thumbnail_path.unwrap_err().to_string(), "No file name found");
+        assert_eq!(thumbnail_path.unwrap_err().to_string(), "Path is not a file");
     }
 
     // Create a test for the create_thumbnail function where the file name does exist
     #[test]
     fn test_create_thumbnail_good_file_name() {
         // Create a path to a file which does not exist
-        let path = Path::new("../tests/test.jpg");
+        let path = Path::new("../tests/th.jpeg");
 
         // Call the create_thumbnail function
         let thumbnail_path = create_thumbnail(&path).unwrap();
 
         //  Check the error text is correct
-        assert_eq!(thumbnail_path, Path::new("../tests/thumbnails/test.jpg"));
+        assert_eq!(thumbnail_path, Path::new("../tests/thumbnails/th.jpeg"));
     }
 }
