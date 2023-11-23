@@ -34,7 +34,7 @@ const ALLOWED_FILE_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "gif"];
 fn create_thumbnail_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     // Create a variable to store the parent path
     let parent_path: &Path = path.parent()
-        .ok_or_else(|| ImageError::NoParentPath)?;
+        .ok_or(ImageError::NoParentPath)?;
 
     // Check if the parent path exists
     if !parent_path.exists() {
@@ -76,11 +76,8 @@ pub fn create_thumbnail(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
 
     // Get the file name from the path
     let file_name = path.file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No file name found"))?;
+        .ok_or(io::Error::new(io::ErrorKind::NotFound, "No file name found"))?;
 
-    // Print the file name
-    println!("File name: {:?}", file_name);
-    
     // Call the create_thumbnail_path function
     let thumbnail_path = create_thumbnail_path(&path)?;
 
