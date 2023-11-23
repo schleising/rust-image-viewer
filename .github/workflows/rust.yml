@@ -20,7 +20,6 @@ jobs:
       run: cargo build --manifest-path ./rust-image-viewer/Cargo.toml --verbose
     - name: Build Lib
       run: cargo build --manifest-path ./image-lib/Cargo.toml --verbose
-    - name: Change directory
-      run: cd image-lib
     - name: Run tests
       run: cargo test Cargo.toml --verbose
+      working-directory: ./image-lib
