@@ -11,3 +11,4 @@ target/
 
 # Ignore the tests directory
 tests/
+test-image/thumbnails/
