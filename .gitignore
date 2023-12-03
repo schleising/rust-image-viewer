@@ -10,5 +10,6 @@ target/
 *.pdb
 
 # Ignore the tests directory
-tests/
+.tests/
 test-image/thumbnails/
+.DS_Store

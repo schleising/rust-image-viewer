@@ -88,7 +88,7 @@ pub fn create_thumbnail(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let image = image::open(&path)?;
 
     // Resize the image to a thumbnail
-    let thumbnail = image.thumbnail(256, 256);
+    let thumbnail = image.thumbnail(128, 128);
 
     // Save the thumbnail
     thumbnail.save(&thumbnail_path_with_file_name)?;
