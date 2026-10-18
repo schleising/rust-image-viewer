@@ -42,7 +42,7 @@ expect_used = "deny"
 
 ## Version
 
-The package is `1.0.0`. Steve approved that release.
+Steve approved the `1.0.0` release. The version in `Cargo.toml` is the current one.
 
 Every change bumps the version in `Cargo.toml` before the work is called done. Follow semantic versioning:
 

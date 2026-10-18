@@ -50,7 +50,7 @@ A path is opened whether or not it contains `.vscode`. Do not special-case edito
 - A GIF or WebP with more than one frame gets a small play badge on that thumbnail. A single-frame GIF or WebP does not.
 - Videos show `loading.png` until a frame from about 15% of the way through the movie is ready, then that frame with the same play badge. If the frame cannot be read, the cell shows `video.png` and no extra badge.
 - The play badge is a 20 px dark circle in the bottom-left of the thumbnail, with a white triangle.
-- One highlight. Arrow keys move it by one cell or by one row of eight, clamped to the list, and scroll it into view. Return or a click opens it. The grid stays up until that file has loaded. Opening a file from Finder, `open`, or a path does not wait on the grid: the viewer is shown at once.
+- One highlight. It is a light wash of the same blue, rounded, so it stays quiet next to the blue folder icon. Arrow keys move it by one cell or by one row of eight, clamped to the list, and scroll it into view. Return or a click opens it. The grid stays up until that file has loaded. Opening a file from Finder, `open`, or a path does not wait on the grid: the viewer is shown at once.
 - Opening a directory remembers the highlight index and scroll offset for the folder being left, then lists the new folder. Returning restores both after the grid has been committed. If the index is now out of range, clamp it.
 - The window title is the current directory's stem.
 - Leaving a folder discards in-flight thumbnail results. Decode work must not touch UI state; the UI thread applies a finished bitmap.
@@ -164,7 +164,8 @@ Colour, contrast, and brightness keyboard steps use factors 1.1 and 0.9. Super R
 
 | Name | Value |
 | --- | --- |
-| Highlight and selection | `rgb(30, 144, 255)`, overlays at alpha 0.5 |
+| Thumbnail highlight | `rgb(30, 144, 255)` at alpha 0.16 in light appearance and 0.28 in dark, with a 1 px inset edge |
+| Selection overlay | `rgb(30, 144, 255)` at alpha 0.5 |
 | Zoom step | 1.05 |
 | Undo cap | 16 |
 | Video skip | 5 000 ms |
@@ -284,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -866,7 +867,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.0.0` (or older `…@1.0.0`).
+# cargo pkgid is `path+file:///…/image-viewer#1.0.1` (or older `…@1.0.1`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"

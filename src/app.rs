@@ -19,7 +19,7 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .dialog, .dialog * { -webkit-user-select: text; user-select: text; }
 .browser { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); align-content: start; overflow: auto; height: 100%; }
 .cell { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 8px; border: 0; background: transparent; color: inherit; text-align: center; min-width: 0; }
-.cell.selected { background: rgba(30, 144, 255, 0.5); }
+.cell.selected { background: light-dark(rgba(30, 144, 255, 0.16), rgba(30, 144, 255, 0.28)); border-radius: 10px; box-shadow: inset 0 0 0 1px light-dark(rgba(30, 144, 255, 0.28), rgba(30, 144, 255, 0.4)); }
 .thumb-box { width: 100%; aspect-ratio: 1; position: relative; overflow: hidden; }
 .thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .thumb.loading { width: 40%; height: 40%; margin: auto; opacity: 0.2; }
