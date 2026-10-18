@@ -219,17 +219,19 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             }
             if let Some(paint) = scrub {
                 div { class: if scrub_shown { "scrubber shown" } else { "scrubber" },
-                    div { class: "scrubber-fill", style: "{paint.fill}" }
-                    if let Some(span) = paint.span {
-                        div { class: "loop-span", style: "{span}" }
+                    div { class: "track",
+                        div { class: "scrubber-fill", style: "{paint.fill}" }
+                        if let Some(span) = paint.span {
+                            div { class: "loop-span", style: "{span}" }
+                        }
+                        if let Some(inn) = paint.inn {
+                            div { class: "loop-in", style: "{inn}" }
+                        }
+                        if let Some(out) = paint.out {
+                            div { class: "loop-out", style: "{out}" }
+                        }
+                        div { class: "mark", style: "{paint.mark}" }
                     }
-                    if let Some(inn) = paint.inn {
-                        div { class: "loop-in", style: "{inn}" }
-                    }
-                    if let Some(out) = paint.out {
-                        div { class: "loop-out", style: "{out}" }
-                    }
-                    div { class: "mark", style: "{paint.mark}" }
                 }
             }
             if let Some(place) = place {
