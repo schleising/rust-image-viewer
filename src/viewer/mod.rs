@@ -16,59 +16,62 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         state.write().sync_display();
     }
     let (
-        video,
         view_size,
         selection,
         scrub,
         show_front,
         front,
         back,
-        video_epoch,
-        video_layer,
-        hide_stills,
+        cover_stills,
+        front_video,
+        back_video,
+        front_video_style,
+        back_video_style,
+        player_paused,
+        player_muted,
     ) = {
         let snapshot = state.read();
-        let video = snapshot.video().cloned();
-        let hide_stills = video.is_some() && snapshot.video_ready_token == snapshot.video_epoch;
+        let shown = snapshot.shown_video_token();
+        let front_video = snapshot.video_front;
+        let back_video = snapshot.video_back;
+        let front_video_style = front_video.map(|token| {
+            video_box_style(
+                snapshot.view_size,
+                &snapshot.video_box(token),
+                shown == Some(token),
+            )
+        });
+        let back_video_style = back_video.map(|token| {
+            video_box_style(
+                snapshot.view_size,
+                &snapshot.video_box(token),
+                shown == Some(token),
+            )
+        });
         (
-            video,
             snapshot.view_size,
             selection_style(&snapshot),
             scrub_style(&snapshot),
             snapshot.show_front,
             snapshot.front.clone(),
             snapshot.back.clone(),
-            snapshot.video_epoch,
-            snapshot.video_layer.clone(),
-            hide_stills,
+            shown.is_some(),
+            front_video,
+            back_video,
+            front_video_style,
+            back_video_style,
+            snapshot.video().is_some_and(|item| item.paused),
+            snapshot.video().is_some_and(|item| item.muted),
         )
     };
     let pointer_window = window.clone();
     let click_window = window.clone();
-    let holding_video = video.is_none() && !video_layer.url.is_empty();
-    let show_video = hide_stills || holding_video;
-    let video_opacity = if show_video { "1" } else { "0" };
-    let video_style = format!(
-        "{}z-index:5;opacity:{video_opacity};",
-        media_style(
-            view_size,
-            video_layer.size,
-            video_layer.scale,
-            video_layer.translation,
-            video_layer.fitted,
-        )
-    );
-    let player_token = video
-        .as_ref()
-        .map(|item| item.token)
-        .or_else(|| video_layer.url.parse().ok());
-    let player_paused = video.as_ref().map(|item| item.paused).unwrap_or(true);
     let front_url = front.url.clone();
     let back_url = back.url.clone();
     let front_load = front_url.clone();
     let back_load = back_url.clone();
-    let front_style = frame_style(view_size, &front, show_front && !show_video);
-    let back_style = frame_style(view_size, &back, !show_front && !show_video);
+    let front_style = frame_style(view_size, &front, show_front && !cover_stills);
+    let back_style = frame_style(view_size, &back, !show_front && !cover_stills);
     let front_src = frame_src(&front_url);
     let back_src = frame_src(&back_url);
     rsx! {
@@ -137,25 +140,11 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 style: "{front_style}",
                 onload: move |_| reveal_loaded(&mut state, &front_load),
             }
-            if let Some(token) = player_token {
-                video {
-                    key: "{token}",
-                    id: "player",
-                    src: "app://video/{token}",
-                    autoplay: !player_paused,
-                    r#loop: true,
-                    style: "{video_style}",
-                    onloadeddata: move |_| {
-                        let pending = {
-                            let snapshot = state.read();
-                            snapshot.video_epoch == video_epoch
-                                && snapshot.video_ready_token != video_epoch
-                        };
-                        if pending {
-                            state.write().mark_video_ready(video_epoch);
-                        }
-                    },
-                }
+            if let Some((token, style)) = front_video.zip(front_video_style) {
+                { video_slot(state, "front", token, style, player_paused, player_muted) }
+            }
+            if let Some((token, style)) = back_video.zip(back_video_style) {
+                { video_slot(state, "back", token, style, player_paused, player_muted) }
             }
             if let Some(style) = selection {
                 div { class: "selection", style: "{style}" }
@@ -169,11 +158,56 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
     }
 }
 
+fn video_slot(
+    mut state: Signal<AppState>,
+    slot: &'static str,
+    token: u64,
+    style: String,
+    paused: bool,
+    document_muted: bool,
+) -> Element {
+    let visible = state.read().shown_video_token() == Some(token);
+    let element_id = if visible { "player" } else { slot };
+    let play = visible && !paused;
+    let quiet = !visible || document_muted;
+    rsx! {
+        video {
+            key: "{slot}-{token}",
+            id: "{element_id}",
+            src: "app://video/{token}",
+            autoplay: play,
+            muted: quiet,
+            preload: "auto",
+            r#loop: true,
+            style: "{style}",
+            onloadeddata: move |_| {
+                let change = state.read().promote_video_would_change(token);
+                if change {
+                    state.write().promote_video(token);
+                }
+            },
+        }
+    }
+}
+
+fn video_box_style(view: (f64, f64), layer: &FrameLayer, visible: bool) -> String {
+    let geometry = media_style(
+        view,
+        layer.size,
+        layer.scale,
+        layer.translation,
+        layer.fitted,
+    );
+    let z = if visible { 5 } else { 2 };
+    let opacity = if visible { "1" } else { "0" };
+    format!("{geometry}z-index:{z};opacity:{opacity};")
+}
+
 pub fn sync_video(video: &crate::document::VideoDocument) {
     let paused = if video.paused { "true" } else { "false" };
     let muted = if video.muted { "true" } else { "false" };
     let script = format!(
-        "(() => {{ const v = document.getElementById('player'); if (!v) return; v.volume = {volume}; v.muted = {muted}; if (Number.isFinite({position}) && Math.abs((v.currentTime || 0) - {position}) > 0.35) v.currentTime = {position}; if ({paused}) v.pause(); else v.play(); }})()",
+        "(() => {{ document.querySelectorAll('video').forEach((node) => {{ if (node.id !== 'player') {{ node.pause(); node.muted = true; }} }}); const v = document.getElementById('player'); if (!v) return; v.volume = {volume}; v.muted = {muted}; if (Number.isFinite({position}) && Math.abs((v.currentTime || 0) - {position}) > 0.35) v.currentTime = {position}; if ({paused}) v.pause(); else v.play(); }})()",
         volume = video.volume,
         position = video.position,
     );
@@ -183,7 +217,7 @@ pub fn sync_video(video: &crate::document::VideoDocument) {
 pub fn bind_player(mut state: Signal<AppState>) {
     spawn(async move {
         let mut eval = dioxus::document::eval(
-            "(() => { const attach = () => { const v = document.getElementById('player'); if (!v || v.dataset.bound) return; v.dataset.bound = '1'; const send = () => dioxus.send([v.currentTime || 0, v.duration || 0, v.videoWidth || 0, v.videoHeight || 0].join(',')); v.addEventListener('timeupdate', send); v.addEventListener('loadedmetadata', send); send(); }; attach(); new MutationObserver(attach).observe(document.documentElement, {childList:true, subtree:true}); })()",
+            "(() => { const attach = () => { const v = document.getElementById('player'); if (!v || v.dataset.bound) return; v.dataset.bound = '1'; const send = () => { if (v.id !== 'player') return; dioxus.send([v.currentTime || 0, v.duration || 0, v.videoWidth || 0, v.videoHeight || 0].join(',')); }; v.addEventListener('timeupdate', send); v.addEventListener('loadedmetadata', send); send(); }; attach(); new MutationObserver(attach).observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['id']}); })()",
         );
         loop {
             let Ok(text) = eval.recv::<String>().await else {

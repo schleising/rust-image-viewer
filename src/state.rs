@@ -125,8 +125,10 @@ pub struct AppState {
     pub last_command_at: Option<Instant>,
     pub thumb_epoch: u64,
     pub video_epoch: u64,
-    pub video_ready_token: u64,
     pub video_layer: FrameLayer,
+    pub video_front: Option<u64>,
+    pub video_back: Option<u64>,
+    pub video_show_front: bool,
     pub scroll_action: Option<ScrollAction>,
     pub show_front: bool,
     pub front: FrameLayer,
@@ -230,8 +232,10 @@ impl AppState {
             last_command_at: None,
             thumb_epoch: 0,
             video_epoch: 0,
-            video_ready_token: 0,
             video_layer: FrameLayer::blank(),
+            video_front: None,
+            video_back: None,
+            video_show_front: false,
             scroll_action: None,
             show_front: true,
             front: FrameLayer::blank(),
@@ -346,7 +350,7 @@ impl AppState {
             self.show_front = false;
         }
         if self.video().is_none() {
-            self.video_layer = FrameLayer::blank();
+            self.clear_video_slots();
         }
     }
 
@@ -362,24 +366,127 @@ impl AppState {
         })
     }
 
+    pub(crate) fn shown_video_token(&self) -> Option<u64> {
+        let token = self.video_layer.url.parse().ok()?;
+        let slot = if self.video_show_front {
+            self.video_front
+        } else {
+            self.video_back
+        };
+        (slot == Some(token)).then_some(token)
+    }
+
+    fn hidden_video_token(&self) -> Option<u64> {
+        if self.video_show_front {
+            self.video_back
+        } else {
+            self.video_front
+        }
+    }
+
+    pub(crate) fn video_box(&self, token: u64) -> FrameLayer {
+        if self.video_layer.url == token.to_string() {
+            return self.video_layer.clone();
+        }
+        if let Some(desired) = self.desired_video_layer() {
+            if desired.url == token.to_string() {
+                return desired;
+            }
+        }
+        FrameLayer {
+            url: token.to_string(),
+            size: None,
+            fitted: true,
+            scale: 1.0,
+            translation: (0.0, 0.0),
+        }
+    }
+
     pub fn video_frame_needs_sync(&self) -> bool {
-        self.desired_video_layer()
-            .is_some_and(|desired| self.video_layer != desired)
+        let Some(desired) = self.desired_video_layer() else {
+            return false;
+        };
+        let Some(token) = desired.url.parse::<u64>().ok() else {
+            return false;
+        };
+        match self.shown_video_token() {
+            Some(shown) if shown == token => self.video_layer != desired,
+            Some(_) => self.hidden_video_token() != Some(token),
+            None => self.video_front != Some(token) && self.video_back != Some(token),
+        }
     }
 
     pub fn retain_video_frame(&mut self) {
         let Some(desired) = self.desired_video_layer() else {
             return;
         };
-        if self.video_layer != desired {
-            self.video_layer = desired;
+        let Some(token) = desired.url.parse::<u64>().ok() else {
+            return;
+        };
+        match self.shown_video_token() {
+            Some(shown) if shown == token => {
+                if self.video_layer != desired {
+                    self.video_layer = desired;
+                }
+            }
+            Some(_) => self.park_hidden_video(token),
+            None => {
+                if self.video_front != Some(token) && self.video_back != Some(token) {
+                    if self.video_front.is_none() {
+                        self.video_front = Some(token);
+                    } else if self.video_back.is_none() {
+                        self.video_back = Some(token);
+                    } else {
+                        self.video_front = Some(token);
+                    }
+                }
+            }
         }
     }
 
-    pub fn mark_video_ready(&mut self, token: u64) {
-        if token == self.video_epoch {
-            self.video_ready_token = token;
+    fn park_hidden_video(&mut self, token: u64) {
+        if self.video_show_front {
+            if self.video_back != Some(token) {
+                self.video_back = Some(token);
+            }
+        } else if self.video_front != Some(token) {
+            self.video_front = Some(token);
         }
+    }
+
+    pub fn promote_video_would_change(&self, token: u64) -> bool {
+        let Some(desired) = self.desired_video_layer() else {
+            return false;
+        };
+        if desired.url != token.to_string() {
+            return false;
+        }
+        if self.video_front != Some(token) && self.video_back != Some(token) {
+            return false;
+        }
+        self.shown_video_token() != Some(token) || self.video_layer != desired
+    }
+
+    pub fn promote_video(&mut self, token: u64) {
+        if !self.promote_video_would_change(token) {
+            return;
+        }
+        let Some(desired) = self.desired_video_layer() else {
+            return;
+        };
+        let was_shown = self.shown_video_token() == Some(token);
+        self.video_show_front = self.video_front == Some(token);
+        self.video_layer = desired;
+        if !was_shown {
+            self.video_epoch = self.video_epoch.wrapping_add(1);
+        }
+    }
+
+    fn clear_video_slots(&mut self) {
+        self.video_layer = FrameLayer::blank();
+        self.video_front = None;
+        self.video_back = None;
+        self.video_show_front = false;
     }
 
     pub fn title(&self) -> String {
@@ -780,8 +887,7 @@ impl AppState {
         self.show_front = true;
         self.front = FrameLayer::blank();
         self.back = FrameLayer::blank();
-        self.video_ready_token = 0;
-        self.video_layer = FrameLayer::blank();
+        self.clear_video_slots();
         self.bump_anim();
     }
 
@@ -1237,7 +1343,7 @@ pub fn wheel_exponent(lines: bool, delta_y: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::catalog::{Entry, EntryKind};
-    use crate::document::{AnimFrame, ImageDocument, ImageMetadata, Loop};
+    use crate::document::{AnimFrame, Document, ImageDocument, ImageMetadata, Loop, VideoDocument};
     use crate::transitions::{ImageTransition, TransitionRegistry, TransitionStyle};
     use image::{Rgba, RgbaImage};
     use std::time::Duration;
@@ -1267,6 +1373,19 @@ mod tests {
             image: Arc::new(RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]))),
             delay: Duration::from_millis(100),
         }
+    }
+
+    fn video_doc(name: &str, token: u64) -> Document {
+        Document::Video(VideoDocument {
+            path: PathBuf::from(name),
+            token,
+            duration: 10.0,
+            position: 1.0,
+            paused: false,
+            volume: 1.0,
+            muted: false,
+            size: (320, 180),
+        })
     }
 
     fn image_doc(name: &str) -> Document {
@@ -1443,6 +1562,62 @@ mod tests {
         assert!(!state.show_front);
         state.reveal_frame(&held.url);
         assert!(!state.show_front);
+    }
+
+    #[test]
+    fn a_shown_video_stays_up_across_pause_and_the_next_video() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (200.0, 100.0);
+        state.document = Some(video_doc("/pictures/a.mp4", 1));
+        assert!(state.video_frame_needs_sync());
+        state.retain_video_frame();
+        assert!(!state.video_frame_needs_sync());
+        assert!(state.video_layer.url.is_empty());
+        assert_eq!(state.video_front, Some(1));
+        assert!(state.video_back.is_none());
+        assert!(!state.promote_video_would_change(2));
+        assert!(state.promote_video_would_change(1));
+        state.promote_video(1);
+        assert_eq!(state.shown_video_token(), Some(1));
+        assert!(state.video_show_front);
+        assert!(!state.promote_video_would_change(1));
+        assert!(!state.video_frame_needs_sync());
+        let epoch = state.video_epoch;
+
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.paused = true;
+            video.position = 4.0;
+        }
+        assert!(!state.video_frame_needs_sync());
+        state.retain_video_frame();
+        assert_eq!(state.shown_video_token(), Some(1));
+        assert_eq!(state.video_epoch, epoch);
+
+        state.document = Some(video_doc("/pictures/b.mp4", 2));
+        assert!(state.video_frame_needs_sync());
+        state.retain_video_frame();
+        assert!(!state.video_frame_needs_sync());
+        assert_eq!(state.shown_video_token(), Some(1));
+        assert_eq!(state.video_back, Some(2));
+        assert!(state.video_show_front);
+        state.promote_video(1);
+        assert_eq!(state.shown_video_token(), Some(1));
+        state.promote_video(2);
+        assert_eq!(state.shown_video_token(), Some(2));
+        assert!(!state.video_show_front);
+        assert!(state.video_epoch > epoch);
+        assert_eq!(state.video_front, Some(1));
+
+        state.document = Some(image_doc("/pictures/c.png"));
+        state.image_generation = 3;
+        state.sync_display();
+        let loaded = state.image_url();
+        state.reveal_frame(&loaded);
+        assert!(state.shown_video_token().is_none());
+        assert!(state.video_front.is_none());
+        assert!(state.video_back.is_none());
+        assert!(state.video_layer.url.is_empty());
     }
 
     #[test]
