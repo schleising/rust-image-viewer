@@ -43,115 +43,134 @@ fn upscale(
 ) -> Result<RgbaImage, TransformError> {
     let width = image.width() as usize;
     let height = image.height() as usize;
-    let attempts = [
-        (vec![1usize, height, width, 3], true),
-        (vec![1usize, 3, height, width], false),
-    ];
-    let mut last = String::from("the super-resolution model rejected the image");
-    for (shape, nhwc) in attempts {
-        match run_model(path, image, &shape, nhwc, scale) {
-            Ok(upscaled) => return Ok(upscaled),
-            Err(error) => last = error,
-        }
+    if width == 0 || height == 0 {
+        return Err(TransformError::BadParams);
     }
-    Err(TransformError::Failed(last))
-}
-
-fn run_model(
-    path: &std::path::Path,
-    image: &RgbaImage,
-    shape: &[usize],
-    nhwc: bool,
-    scale: u8,
-) -> Result<RgbaImage, String> {
-    let tensor = input_tensor(image, shape, nhwc)?;
+    let (luma, cr, cb) = ycrcb_planes(image);
+    let shape = [1usize, 1, height, width];
+    let tensor = Tensor::from_shape(&shape, &luma)
+        .map_err(|error| TransformError::Failed(error.to_string()))?;
     let model = tract_onnx::onnx()
         .model_for_path(path)
-        .map_err(|error| error.to_string())?
+        .map_err(failure)?
         .with_input_fact(0, f32::fact(shape).into())
-        .map_err(|error| error.to_string())?
+        .map_err(failure)?
         .into_optimized()
-        .map_err(|error| error.to_string())?
+        .map_err(failure)?
         .into_runnable()
-        .map_err(|error| error.to_string())?;
-    let outputs = model
-        .run(tvec!(tensor.into()))
-        .map_err(|error| error.to_string())?;
+        .map_err(failure)?;
+    let outputs = model.run(tvec!(tensor.into())).map_err(failure)?;
     let output = outputs
         .into_iter()
         .next()
-        .ok_or_else(|| "the model returned no tensors".to_string())?;
-    tensor_to_image(&output, image, scale, nhwc)
-}
-
-fn input_tensor(image: &RgbaImage, shape: &[usize], nhwc: bool) -> Result<Tensor, String> {
-    let mut data = Vec::with_capacity(image.width() as usize * image.height() as usize * 3);
-    if nhwc {
-        for pixel in image.pixels() {
-            data.push(pixel[2] as f32);
-            data.push(pixel[1] as f32);
-            data.push(pixel[0] as f32);
-        }
-    } else {
-        for channel in [2_usize, 1, 0] {
-            for pixel in image.pixels() {
-                data.push(pixel[channel] as f32);
-            }
-        }
-    }
-    Tensor::from_shape(shape, &data).map_err(|error| error.to_string())
-}
-
-fn tensor_to_image(
-    tensor: &Tensor,
-    source: &RgbaImage,
-    scale: u8,
-    nhwc_hint: bool,
-) -> Result<RgbaImage, String> {
-    let view = tensor
-        .to_array_view::<f32>()
-        .map_err(|error| error.to_string())?;
-    let shape = view.shape();
-    let (height, width, nhwc) = match shape {
-        [_, h, w, 3] => (*h, *w, true),
-        [_, 3, h, w] => (*h, *w, false),
-        _ => {
-            return Err(format!("unexpected model output shape {shape:?}"));
-        }
-    };
-    let expected_w = source.width() as usize * scale as usize;
-    let expected_h = source.height() as usize * scale as usize;
-    if width != expected_w || height != expected_h {
-        return Err(format!(
-            "model output {width}x{height} is not {expected_w}x{expected_h}"
-        ));
-    }
-    let _ = nhwc_hint;
-    let mut max = 0.0_f32;
-    view.iter().for_each(|sample| max = max.max(*sample));
-    let gain = if max <= 1.5 { 255.0 } else { 1.0 };
-    let mut out = RgbaImage::new(width as u32, height as u32);
-    for y in 0..height {
-        for x in 0..width {
-            let (blue, green, red) = if nhwc {
-                (view[[0, y, x, 0]], view[[0, y, x, 1]], view[[0, y, x, 2]])
-            } else {
-                (view[[0, 0, y, x]], view[[0, 1, y, x]], view[[0, 2, y, x]])
-            };
-            let alpha = nearest_alpha(source, x, y, width, height);
-            out.put_pixel(
-                x as u32,
-                y as u32,
-                Rgba([
-                    super::round_channel(red * gain),
-                    super::round_channel(green * gain),
-                    super::round_channel(blue * gain),
-                    alpha,
-                ]),
-            );
+        .ok_or_else(|| TransformError::Failed("the model returned no tensors".into()))?;
+    let luma = output_luma(&output, width, height, scale)?;
+    let out_width = width * scale as usize;
+    let out_height = height * scale as usize;
+    let cr = resize_bilinear(&cr, width, height, out_width, out_height);
+    let cb = resize_bilinear(&cb, width, height, out_width, out_height);
+    let mut out = RgbaImage::new(out_width as u32, out_height as u32);
+    for y in 0..out_height {
+        for x in 0..out_width {
+            let index = y * out_width + x;
+            let [red, green, blue] = ycrcb_to_rgb(luma[index] * 255.0, cr[index], cb[index]);
+            let alpha = nearest_alpha(image, x, y, out_width, out_height);
+            out.put_pixel(x as u32, y as u32, Rgba([red, green, blue, alpha]));
         }
     }
     Ok(out)
+}
+
+fn ycrcb_planes(image: &RgbaImage) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let mut luma = Vec::with_capacity(image.len());
+    let mut cr = Vec::with_capacity(image.len());
+    let mut cb = Vec::with_capacity(image.len());
+    for pixel in image.pixels() {
+        let red = pixel[0] as f32;
+        let green = pixel[1] as f32;
+        let blue = pixel[2] as f32;
+        let y = 0.299 * red + 0.587 * green + 0.114 * blue;
+        luma.push(y / 255.0);
+        cr.push((red - y) * 0.713 + 128.0);
+        cb.push((blue - y) * 0.564 + 128.0);
+    }
+    (luma, cr, cb)
+}
+
+fn output_luma(
+    tensor: &Tensor,
+    width: usize,
+    height: usize,
+    scale: u8,
+) -> Result<Vec<f32>, TransformError> {
+    let view = tensor
+        .to_array_view::<f32>()
+        .map_err(|error| TransformError::Failed(error.to_string()))?;
+    let shape = view.shape();
+    let (out_height, out_width) = match shape {
+        [1, 1, h, w] => (*h, *w),
+        _ => {
+            return Err(TransformError::Failed(format!(
+                "unexpected model output shape {shape:?}"
+            )));
+        }
+    };
+    let expected_w = width * scale as usize;
+    let expected_h = height * scale as usize;
+    if out_width != expected_w || out_height != expected_h {
+        return Err(TransformError::Failed(format!(
+            "model output {out_width}x{out_height} is not {expected_w}x{expected_h}"
+        )));
+    }
+    Ok(view.iter().copied().collect())
+}
+
+fn ycrcb_to_rgb(y: f32, cr: f32, cb: f32) -> [u8; 3] {
+    let cr = cr - 128.0;
+    let cb = cb - 128.0;
+    [
+        super::round_channel(y + 1.403 * cr),
+        super::round_channel(y - 0.714 * cr - 0.344 * cb),
+        super::round_channel(y + 1.773 * cb),
+    ]
+}
+
+fn resize_bilinear(
+    src: &[f32],
+    src_w: usize,
+    src_h: usize,
+    dst_w: usize,
+    dst_h: usize,
+) -> Vec<f32> {
+    let mut dst = Vec::with_capacity(dst_w * dst_h);
+    let x_scale = src_w as f32 / dst_w as f32;
+    let y_scale = src_h as f32 / dst_h as f32;
+    for y in 0..dst_h {
+        let sy = (y as f32 + 0.5) * y_scale - 0.5;
+        for x in 0..dst_w {
+            let sx = (x as f32 + 0.5) * x_scale - 0.5;
+            dst.push(sample(src, src_w, src_h, sx, sy));
+        }
+    }
+    dst
+}
+
+fn sample(src: &[f32], width: usize, height: usize, x: f32, y: f32) -> f32 {
+    let x = x.clamp(0.0, (width - 1) as f32);
+    let y = y.clamp(0.0, (height - 1) as f32);
+    let x0 = x.floor() as usize;
+    let y0 = y.floor() as usize;
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+    let tx = x - x0 as f32;
+    let ty = y - y0 as f32;
+    let p00 = src[y0 * width + x0];
+    let p10 = src[y0 * width + x1];
+    let p01 = src[y1 * width + x0];
+    let p11 = src[y1 * width + x1];
+    let top = p00 + (p10 - p00) * tx;
+    let bottom = p01 + (p11 - p01) * tx;
+    top + (bottom - top) * ty
 }
 
 fn nearest_alpha(source: &RgbaImage, x: usize, y: usize, width: usize, height: usize) -> u8 {
@@ -162,22 +181,44 @@ fn nearest_alpha(source: &RgbaImage, x: usize, y: usize, width: usize, height: u
     source.get_pixel(sx, sy)[3]
 }
 
+fn failure(error: impl std::fmt::Display) -> TransformError {
+    TransformError::Failed(format!("{error:#}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn missing_model_leaves_the_caller_with_an_error() {
-        let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 4]));
-        let error = SuperResolution
-            .apply(&image, &Params::Scale(4))
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
+    fn fsrcnn_quadruples_a_colour_when_the_model_is_present() -> Result<(), TransformError> {
+        let image = RgbaImage::from_fn(8, 8, |x, y| {
+            Rgba([
+                40 + x as u8 * 20,
+                30 + y as u8 * 15,
+                180,
+                if x + y > 8 { 200 } else { 10 },
+            ])
+        });
         let path = model_path(4);
-        if path.is_file() {
-            return;
+        if !path.is_file() {
+            let error = SuperResolution
+                .apply(&image, &Params::Scale(4))
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
+            assert!(error.contains("missing"));
+            return Ok(());
         }
-        assert!(error.contains("missing"));
+        let out = SuperResolution.apply(&image, &Params::Scale(4))?;
+        assert_eq!(out.dimensions(), (32, 32));
+        assert_eq!(out.get_pixel(0, 0)[3], 10);
+        assert_eq!(out.get_pixel(31, 31)[3], 200);
+        let source = image.get_pixel(4, 4);
+        let centre = out.get_pixel(18, 18);
+        for channel in 0..3 {
+            let delta = source[channel] as i16 - centre[channel] as i16;
+            assert!(delta.abs() <= 24, "{channel}: {source:?} -> {centre:?}");
+        }
+        Ok(())
     }
 }
