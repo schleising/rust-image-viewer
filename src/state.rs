@@ -1190,6 +1190,14 @@ impl AppState {
                 }
                 Effect::None
             }
+            Note::Swipe(direction) => {
+                let command = if direction > 0 {
+                    Command::Next
+                } else {
+                    Command::Previous
+                };
+                self.dispatch(command, Instant::now())
+            }
             Note::Thumbs => {
                 self.thumb_epoch = self.thumb_epoch.wrapping_add(1);
                 Effect::None
@@ -1296,20 +1304,31 @@ impl AppState {
         }
     }
 
-    pub fn on_wheel(&mut self, lines: bool, delta_y: f64, at: (f64, f64)) {
+    pub fn on_wheel(
+        &mut self,
+        lines: bool,
+        delta_x: f64,
+        delta_y: f64,
+        at: (f64, f64),
+        _now: Instant,
+    ) -> Effect {
         if self.mode != Mode::Viewer || self.dialog.is_some() {
-            return;
+            return Effect::None;
+        }
+        if swipe_motion(delta_x, delta_y) {
+            return Effect::None;
         }
         let Some(size) = self.pixel_size() else {
-            return;
+            return Effect::None;
         };
         let exponent = wheel_exponent(lines, delta_y);
         if exponent == 0.0 {
-            return;
+            return Effect::None;
         }
         let factor = ZOOM_STEP.powf(-exponent);
         self.viewport
             .zoom_at(self.view_size, size, at.0, at.1, factor);
+        Effect::None
     }
 
     pub fn pointer_down(&mut self, at: (f64, f64), control: bool) {
@@ -1368,6 +1387,10 @@ impl AppState {
     pub fn dismiss_message(&mut self) {
         self.message = None;
     }
+}
+
+fn swipe_motion(delta_x: f64, delta_y: f64) -> bool {
+    delta_x.is_finite() && delta_x != 0.0 && delta_x.abs() > delta_y.abs()
 }
 
 pub fn wheel_exponent(lines: bool, delta_y: f64) -> f64 {
@@ -1712,7 +1735,8 @@ mod tests {
         let before = state
             .viewport
             .image_point(state.view_size, size, at.0, at.1);
-        state.on_wheel(false, -25.0, at);
+        let effect = state.on_wheel(false, 0.0, -25.0, at, Instant::now());
+        assert!(matches!(effect, Effect::None));
         let after = state
             .viewport
             .image_point(state.view_size, size, at.0, at.1);
@@ -1720,6 +1744,38 @@ mod tests {
         assert!((before.1 - after.1).abs() < 1e-6);
         let expected = ZOOM_STEP.powf(0.5);
         assert!((state.viewport.scale - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_swipe_note_moves_one_file_and_the_wheel_does_not() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (200.0, 100.0);
+        state.folder = folder();
+        state.folder.entries.push(Entry {
+            path: PathBuf::from("/pictures/c.png"),
+            kind: EntryKind::Image,
+            label: "c".into(),
+        });
+        state.document = Some(image_doc("/pictures/b.png"));
+        let size = state.pixel_size().unwrap_or((0, 0));
+        state.viewport.refit(state.view_size, size);
+        let scale = state.viewport.scale;
+        let now = Instant::now();
+        let coast = state.on_wheel(false, 200.0, 0.0, (10.0, 10.0), now);
+        assert!(matches!(coast, Effect::None));
+        assert!((state.viewport.scale - scale).abs() < 1e-9);
+
+        let next = state.handle_note(Note::Swipe(1), &TransitionRegistry::builtin());
+        assert!(matches!(
+            next,
+            Effect::LoadFile { ref path, .. } if path.ends_with("c.png")
+        ));
+        let previous = state.handle_note(Note::Swipe(-1), &TransitionRegistry::builtin());
+        assert!(matches!(
+            previous,
+            Effect::LoadFile { ref path, .. } if path.ends_with("a.png")
+        ));
     }
 
     #[test]

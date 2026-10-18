@@ -25,6 +25,7 @@ pub enum Note {
         result: Result<(), String>,
     },
     Thumbs,
+    Swipe(i8),
 }
 
 static EARLY: Mutex<Vec<Note>> = Mutex::new(Vec::new());

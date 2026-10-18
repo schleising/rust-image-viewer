@@ -65,6 +65,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         )
     };
     let pointer_window = window.clone();
+    let wheel_window = window.clone();
     let click_window = window.clone();
     let front_url = front.url.clone();
     let back_url = back.url.clone();
@@ -80,7 +81,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             class: "stage",
             onmounted: move |_| {
                 dioxus::document::eval(
-                    "(() => { const stage = document.getElementById('stage'); if (!stage || stage.dataset.capture) return; stage.dataset.capture = '1'; stage.addEventListener('pointerdown', (event) => { if (event.button === 0) stage.setPointerCapture(event.pointerId); }); })()",
+                    "(() => { const stage = document.getElementById('stage'); if (!stage || stage.dataset.capture) return; stage.dataset.capture = '1'; stage.addEventListener('wheel', (event) => event.preventDefault(), { passive: false }); stage.addEventListener('pointerdown', (event) => { if (event.button === 0) stage.setPointerCapture(event.pointerId); }); })()",
                 );
             },
             onwheel: move |event| {
@@ -88,8 +89,15 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 let point = event.data().element_coordinates();
                 let delta = event.data().delta();
                 let lines = matches!(delta, WheelDelta::Lines(_) | WheelDelta::Pages(_));
-                let delta_y = delta.strip_units().y;
-                state.write().on_wheel(lines, delta_y, (point.x, point.y));
+                let vector = delta.strip_units();
+                let effect = state.write().on_wheel(
+                    lines,
+                    vector.x,
+                    vector.y,
+                    (point.x, point.y),
+                    std::time::Instant::now(),
+                );
+                effects::run(state, wheel_window.clone(), effect);
             },
             onpointerdown: move |event| {
                 event.prevent_default();
