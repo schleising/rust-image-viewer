@@ -72,16 +72,19 @@ pub fn app() -> Element {
     use_wry_event_handler({
         let window = window.clone();
         move |event, _| {
-            if let Event::WindowEvent {
-                event: WindowEvent::Resized(size),
-                ..
-            } = event
-            {
-                let scale = window.scale_factor().max(1.0);
-                state.write().set_view_size(
-                    (size.width as f64 / scale, size.height as f64 / scale),
-                    scale,
-                );
+            if let Event::WindowEvent { event, .. } = event {
+                match event {
+                    WindowEvent::Resized(size) => {
+                        let scale = window.scale_factor().max(1.0);
+                        state.write().set_view_size(
+                            (size.width as f64 / scale, size.height as f64 / scale),
+                            scale,
+                        );
+                        restore_keyboard(&window, &mut state);
+                    }
+                    WindowEvent::Focused(true) => restore_keyboard(&window, &mut state),
+                    _ => {}
+                }
             }
         }
     });
@@ -170,6 +173,17 @@ pub fn app() -> Element {
                 }
             }
         }
+    }
+}
+
+fn restore_keyboard(window: &dioxus::desktop::DesktopContext, state: &mut Signal<AppState>) {
+    let Some(until) = state.read().keyboard_until else {
+        return;
+    };
+    if Instant::now() < until {
+        effects::focus_page(window);
+    } else {
+        state.write().keyboard_until = None;
     }
 }
 

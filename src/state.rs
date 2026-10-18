@@ -90,6 +90,7 @@ pub enum Effect {
     },
     ToggleFullscreen,
     SyncVideo,
+    FocusPage,
 }
 
 pub struct AppState {
@@ -129,6 +130,7 @@ pub struct AppState {
     pub last_command: Option<String>,
     pub last_command_at: Option<Instant>,
     pub thumb_epoch: u64,
+    pub keyboard_until: Option<Instant>,
     pub video_epoch: u64,
     pub video_layer: FrameLayer,
     pub video_front: Option<u64>,
@@ -236,6 +238,7 @@ impl AppState {
             last_command: None,
             last_command_at: None,
             thumb_epoch: 0,
+            keyboard_until: None,
             video_epoch: 0,
             video_layer: FrameLayer::blank(),
             video_front: None,
@@ -619,7 +622,7 @@ impl AppState {
             Command::Open(path) => self.open_path(path),
             Command::ReturnToBrowser => {
                 self.return_to_browser();
-                Effect::None
+                Effect::FocusPage
             }
             Command::Next => self.step_media(1),
             Command::Previous => self.step_media(-1),
@@ -631,6 +634,9 @@ impl AppState {
                     }
                 }
                 self.fullscreen = !self.fullscreen;
+                if !self.fullscreen {
+                    self.keyboard_until = Some(now + Duration::from_millis(1000));
+                }
                 Effect::ToggleFullscreen
             }
             Command::OpenAdjust => {

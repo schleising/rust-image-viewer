@@ -10,11 +10,21 @@ pub fn run(mut state: Signal<AppState>, window: DesktopContext, effect: Effect) 
     match effect {
         Effect::None => {}
         Effect::Quit => window.close(),
-        Effect::ToggleFullscreen => window.set_fullscreen(state.read().fullscreen),
+        Effect::ToggleFullscreen => {
+            let fullscreen = state.read().fullscreen;
+            window.set_fullscreen(fullscreen);
+            if !fullscreen {
+                // Leaving full screen drops the web view as the keyboard
+                // target when the animation finishes. Claim it now, and again
+                // on the resize that ends that animation.
+                focus_page(&window);
+            }
+        }
         Effect::SyncVideo => {
             let next = state.read().video_epoch.wrapping_add(1);
             state.write().video_epoch = next;
         }
+        Effect::FocusPage => focus_page(&window),
         Effect::ListFolder(path) => {
             wake::spawn_blocking(move || {
                 let result = crate::catalog::list_folder(&path).map_err(|error| error.to_string());
@@ -148,4 +158,11 @@ fn adjust_each(frames: &[AnimFrame], params: &Params) -> Result<Vec<AnimFrame>, 
         });
     }
     Ok(next)
+}
+
+pub(crate) fn focus_page(window: &DesktopContext) {
+    if let Err(error) = window.webview.focus() {
+        tracing::warn!(%error, "could not focus the page");
+    }
+    dioxus::document::eval("document.getElementById('root')?.focus()");
 }
