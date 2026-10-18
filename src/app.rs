@@ -33,13 +33,13 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .scrubber { position: absolute; z-index: 6; left: 100px; right: 100px; bottom: 100px; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.38); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.35); pointer-events: none; }
 .scrubber-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: rgb(30, 144, 255); }
 .scrubber .mark { position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: white; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.45); }
-.dialog-back { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; }
+.dialog-back { position: absolute; z-index: 8; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; }
 .dialog { background: light-dark(#fff, #2c2c2c); color: inherit; padding: 16px 18px; min-width: 280px; border-radius: 8px; }
 .dialog h2 { margin: 0 0 12px; font-size: 16px; }
 .info-row, .slider { display: flex; justify-content: space-between; gap: 16px; margin: 6px 0; }
 .slider input { width: 160px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.message { position: absolute; left: 12px; right: 12px; top: 12px; background: rgba(0, 0, 0, 0.78); color: white; padding: 8px 10px; border-radius: 6px; }
+.message { position: absolute; z-index: 7; left: 12px; right: 12px; top: 12px; background: rgba(0, 0, 0, 0.78); color: white; padding: 8px 10px; border-radius: 6px; }
 "#;
 
 pub fn app() -> Element {

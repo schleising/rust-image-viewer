@@ -115,6 +115,7 @@ pub struct AppState {
     pub dialog: Option<Dialog>,
     pub adjust_base: Option<Arc<[AnimFrame]>>,
     pub message: Option<String>,
+    busy_note: Option<String>,
     pub folder_generation: u64,
     pub image_generation: u64,
     pub load_ticket: u64,
@@ -223,6 +224,7 @@ impl AppState {
             dialog: None,
             adjust_base: None,
             message: None,
+            busy_note: None,
             folder_generation: 0,
             image_generation: 0,
             load_ticket: 0,
@@ -904,7 +906,7 @@ impl AppState {
         self.adjust_base = None;
         self.viewport = Viewport::fitted();
         self.phase = Phase::Idle;
-        self.busy = false;
+        self.clear_busy();
         self.show_front = true;
         self.front = FrameLayer::blank();
         self.back = FrameLayer::blank();
@@ -918,12 +920,26 @@ impl AppState {
         self.viewport.selection = None;
         if crate::transforms::blocking_transform(id) {
             tracing::info!(transform = id.as_str(), "running a long transform");
+            self.announce_busy(busy_notice(id, &params));
         }
         Effect::Transform {
             ticket: self.work_ticket,
             id,
             params,
         }
+    }
+
+    fn announce_busy(&mut self, note: String) {
+        self.busy_note = Some(note.clone());
+        self.message = Some(note);
+    }
+
+    fn clear_busy(&mut self) {
+        self.busy = false;
+        if self.busy_note.is_some() && self.message == self.busy_note {
+            self.message = None;
+        }
+        self.busy_note = None;
     }
 
     fn commit_adjust(&mut self) -> Effect {
@@ -1122,7 +1138,7 @@ impl AppState {
                 tracing::warn!(%message, "could not list the folder");
                 self.pending_file = None;
                 self.message = Some(message);
-                self.busy = false;
+                self.clear_busy();
                 if self.document.is_none() {
                     self.mode = Mode::Browser;
                 }
@@ -1132,7 +1148,7 @@ impl AppState {
                 if ticket != self.load_ticket {
                     return Effect::None;
                 }
-                self.busy = false;
+                self.clear_busy();
                 match result {
                     Ok(document) => {
                         let navigation = self.pending_navigation;
@@ -1160,7 +1176,7 @@ impl AppState {
                 if ticket != self.work_ticket {
                     return Effect::None;
                 }
-                self.busy = false;
+                self.clear_busy();
                 match result {
                     Ok(()) => {
                         if let Some(image) = self.image_mut() {
@@ -1185,7 +1201,7 @@ impl AppState {
         if ticket != self.work_ticket {
             return Effect::None;
         }
-        self.busy = false;
+        self.clear_busy();
         self.adjust_base = None;
         match result {
             Ok(frames) => {
@@ -1362,6 +1378,16 @@ pub fn wheel_exponent(lines: bool, delta_y: f64) -> f64 {
         delta_y
     } else {
         delta_y / WHEEL_PIXELS
+    }
+}
+
+fn busy_notice(id: TransformId, params: &Params) -> String {
+    let label = crate::transforms::find_transform(id)
+        .map(|transform| transform.label().to_string())
+        .unwrap_or_else(|| "This edit".to_string());
+    match params {
+        Params::Scale(scale) => format!("{label} is working, {scale}×"),
+        _ => format!("{label} is working"),
     }
 }
 
@@ -1736,5 +1762,89 @@ mod tests {
         state.undo();
         assert!(!state.is_dirty());
         assert!(state.viewport.fitted);
+    }
+
+    #[test]
+    fn a_long_edit_says_it_is_working_until_it_finishes() -> Result<(), String> {
+        let mut state = viewing_picture();
+        let effect = state.dispatch(
+            Command::Transform {
+                id: TransformId::new("denoise"),
+                params: Params::None,
+            },
+            Instant::now(),
+        );
+        assert!(matches!(effect, Effect::Transform { ticket: 1, .. }));
+        assert!(state.busy);
+        assert_eq!(state.message.as_deref(), Some("Denoise is working"));
+
+        state.dismiss_message();
+        assert!(state.message.is_none());
+
+        let finished = state.handle_note(
+            Note::Transformed {
+                ticket: 1,
+                result: Ok(vec![frame()]),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert!(matches!(finished, Effect::None));
+        assert!(!state.busy);
+        assert!(state.message.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_long_edit_replaces_the_busy_note() -> Result<(), String> {
+        let mut state = viewing_picture();
+        let started = state.dispatch(
+            Command::Transform {
+                id: TransformId::new("super-resolution"),
+                params: Params::Scale(4),
+            },
+            Instant::now(),
+        );
+        assert!(matches!(started, Effect::Transform { .. }));
+        assert_eq!(
+            state.message.as_deref(),
+            Some("Super Resolution is working, 4×")
+        );
+        let finished = state.handle_note(
+            Note::Transformed {
+                ticket: 1,
+                result: Err("super-resolution model is missing".into()),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert!(matches!(finished, Effect::None));
+        assert!(!state.busy);
+        assert_eq!(
+            state.message.as_deref(),
+            Some("super-resolution model is missing")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_quick_edit_does_not_announce_itself() -> Result<(), String> {
+        let mut state = viewing_picture();
+        let effect = state.dispatch(
+            Command::Transform {
+                id: TransformId::new("sharpen"),
+                params: Params::None,
+            },
+            Instant::now(),
+        );
+        assert!(matches!(effect, Effect::Transform { .. }));
+        assert!(state.busy);
+        assert!(state.message.is_none());
+        Ok(())
+    }
+
+    fn viewing_picture() -> AppState {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.document = Some(image_doc("/pictures/a.png"));
+        state
     }
 }

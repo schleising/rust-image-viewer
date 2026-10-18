@@ -491,7 +491,7 @@ enum Command {
 
 `Command::available` is the enablement table in section 1. Menus and the key handler both call it. A new transform does not add a variant. A new transition does not either: `Next`, `Previous`, and `Open` ask the transition registry before swapping the document.
 
-`busy` is true while a blocking transform runs. Further transform commands are refused until it finishes. The stage does not dim.
+`busy` is true while a transform, save, or crop runs. Further transform commands are refused until it finishes. Denoise and super-resolution leave a note in the message area, naming the edit, until the edit finishes, fails, or the note is clicked away. The stage does not dim.
 
 ## 6. Transforms
 
