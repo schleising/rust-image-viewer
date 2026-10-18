@@ -386,9 +386,11 @@ fn params_for(id: &str) -> Params {
 }
 
 fn about_metadata() -> AboutMetadata {
+    let version = env!("CARGO_PKG_VERSION");
     AboutMetadata {
         name: Some("Image Viewer".into()),
-        version: Some(env!("CARGO_PKG_VERSION").into()),
+        version: Some(version.into()),
+        short_version: Some(version.into()),
         copyright: Some("Copyright © 2026 Steve".into()),
         icon: about_icon(),
         ..AboutMetadata::default()
@@ -402,4 +404,17 @@ fn about_icon() -> Option<Icon> {
         .to_rgba8();
     let (width, height) = image.dimensions();
     Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn about_shows_one_package_version() {
+        let about = about_metadata();
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(about.version.as_deref(), Some(version));
+        assert_eq!(about.short_version.as_deref(), Some(version));
+    }
 }

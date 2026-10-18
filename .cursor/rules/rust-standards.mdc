@@ -42,9 +42,11 @@ expect_used = "deny"
 
 ## Version
 
-Steve approved the `1.0.0` release. The version in `Cargo.toml` is the current one.
+Steve approved the `1.0.0` release. The version in `Cargo.toml` is the only version.
 
-Every change bumps the version in `Cargo.toml` before the work is called done. Follow semantic versioning:
+Every change bumps that version before the work is called done. About sets both `version` and `short_version` to `CARGO_PKG_VERSION`. `CFBundleShortVersionString` and `CFBundleVersion` are the same string. A binary install updates both plist keys with the binary, so the About panel never mixes an older bundle version with a newer package version.
+
+Follow semantic versioning:
 
 - Patch (`1.0.1`) for fixes.
 - Minor (`1.1.0`) for new behaviour that keeps existing behaviour working.

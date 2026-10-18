@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -718,7 +718,7 @@ The handler clones an `Arc` and encodes without holding the UI lock across the e
 
 A native muda menu from `dioxus::desktop::muda`, built the same way as a normal macOS menu bar:
 
-- Application menu: About Image Viewer, Hide, Hide Others, Show All, Quit. About uses the product name, `CARGO_PKG_VERSION`, `Copyright © 2026 Steve`, and the 256×256 icon.
+- Application menu: About Image Viewer, Hide, Hide Others, Show All, Quit. About uses the product name, `CARGO_PKG_VERSION` for both the marketing version and the build version, `Copyright © 2026 Steve`, and the 256×256 icon. The two strings match, so the panel shows the package version once. `CFBundleShortVersionString` and `CFBundleVersion` are that same string.
 - File: Save.
 - Show: Return to Browser, Next, Previous, a separator, Adjust Image, a separator, Zoom to Rect, Reset Zoom, a separator, Image Information.
 - Image: registry items in `order`, separators between `MenuGroup`s, then Undo.
@@ -867,7 +867,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.0.1` (or older `…@1.0.1`).
+# cargo pkgid is `path+file:///…/image-viewer#1.0.2` (or older `…@1.0.2`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
