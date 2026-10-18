@@ -16,5 +16,5 @@ When a file is present, inference uses `tract-onnx`:
 - Channels are BGR, matching the OpenCV path with no channel swap. The loader swaps RGB to BGR on the way in and back on the way out.
 - Layout is tried as NHWC `[1, height, width, 3]`, then NCHW `[1, 3, height, width]`. The attempt whose output is `scale` times the input in each dimension is kept.
 - Alpha is not part of the network. It is resampled with nearest neighbour onto the upscaled image.
-
 Record the tensor names and the tolerance here after conversion, and the FSRCNN test will compare a small image against that tolerance. While this note does not name an output tensor, the test stays skipped.
+
