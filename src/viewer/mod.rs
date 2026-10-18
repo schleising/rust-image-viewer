@@ -149,8 +149,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             if let Some(style) = selection {
                 div { class: "selection", style: "{style}" }
             }
-            if let Some((style, mark)) = scrub {
-                div { class: "scrubber", style: "{style}",
+            if let Some((fill, mark)) = scrub {
+                div { class: "scrubber",
+                    div { class: "scrubber-fill", style: "{fill}" }
                     div { class: "mark", style: "{mark}" }
                 }
             }
@@ -328,8 +329,10 @@ fn scrub_style(state: &AppState) -> Option<(String, String)> {
         return None;
     }
     let fraction = (video.position / video.duration).clamp(0.0, 1.0);
-    let mark = format!("left:calc({}% - 4px);", fraction * 100.0);
-    Some(("".into(), mark))
+    let percent = fraction * 100.0;
+    let fill = format!("width:{percent}%;");
+    let mark = format!("left:calc({percent}% - 6px);");
+    Some((fill, mark))
 }
 
 fn scrub_hit(state: &AppState, y: f64) -> bool {
