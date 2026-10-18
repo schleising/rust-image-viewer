@@ -67,7 +67,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#0.1.0` (or older `…@0.1.0`).
+# cargo pkgid is `path+file:///…/image-viewer#1.0.0` (or older `…@1.0.0`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
