@@ -62,14 +62,15 @@ pub struct Availability {
     pub dialog: bool,
     pub adjusting: bool,
     pub transitioning: bool,
+    pub locked: bool,
 }
 
 impl Command {
     pub fn available(&self, flags: &Availability) -> bool {
         match self {
-            Self::CommitPreview | Self::CancelPreview => return flags.adjusting,
-            Self::Quit => return !flags.dialog,
-            _ if flags.dialog => return false,
+            Self::CommitPreview | Self::CancelPreview => return flags.adjusting && !flags.locked,
+            Self::Quit => return !flags.dialog && !flags.locked,
+            _ if flags.dialog || flags.locked => return false,
             _ => {}
         }
         match self {
@@ -252,6 +253,7 @@ mod tests {
             dialog: false,
             adjusting: false,
             transitioning: false,
+            locked: false,
         }
     }
 

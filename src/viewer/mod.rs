@@ -92,6 +92,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             },
             onwheel: move |event| {
                 event.prevent_default();
+                if state.read().long_operation() {
+                    return;
+                }
                 let point = event.data().element_coordinates();
                 let delta = event.data().delta();
                 let lines = matches!(delta, WheelDelta::Lines(_) | WheelDelta::Pages(_));
@@ -107,6 +110,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             },
             onpointerdown: move |event| {
                 event.prevent_default();
+                if state.read().long_operation() {
+                    return;
+                }
                 let point = event.data().element_coordinates();
                 if scrub_hit(&state.read(), point.y) {
                     let fraction = scrub_fraction(&state.read(), point.x);
@@ -120,6 +126,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 state.write().pointer_down((point.x, point.y), control);
             },
             onpointermove: move |event| {
+                if state.read().long_operation() {
+                    return;
+                }
                 let point = event.data().element_coordinates();
                 state.write().pointer_move((point.x, point.y));
                 state.write().reveal_place(std::time::Instant::now());
@@ -136,6 +145,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 state.write().pointer_up((point.x, point.y));
             },
             ondoubleclick: move |_| {
+                if state.read().long_operation() {
+                    return;
+                }
                 let now = std::time::Instant::now();
                 if state.read().open_fullscreen_guard(now) {
                     return;

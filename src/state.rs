@@ -568,6 +568,7 @@ impl AppState {
             dialog,
             adjusting: matches!(self.dialog, Some(Dialog::Adjust { .. })),
             transitioning: matches!(self.phase, Phase::Transitioning { .. }),
+            locked: self.long_operation(),
         }
     }
 
@@ -1425,7 +1426,22 @@ impl AppState {
     }
 
     pub fn dismiss_message(&mut self) {
+        if self.long_operation() {
+            return;
+        }
         self.message = None;
+    }
+
+    pub fn long_operation(&self) -> bool {
+        self.busy_note.is_some()
+    }
+
+    pub fn cancel_long_operation(&mut self) {
+        if !self.long_operation() {
+            return;
+        }
+        self.work_ticket = self.work_ticket.wrapping_add(1);
+        self.clear_busy();
     }
 }
 
@@ -1448,10 +1464,11 @@ fn busy_notice(id: TransformId, params: &Params) -> String {
     let label = crate::transforms::find_transform(id)
         .map(|transform| transform.label().to_string())
         .unwrap_or_else(|| "This edit".to_string());
-    match params {
+    let working = match params {
         Params::Scale(scale) => format!("{label} is working, {scale}×"),
         _ => format!("{label} is working"),
-    }
+    };
+    format!("{working}. Escape cancels")
 }
 
 #[cfg(test)]
@@ -1895,10 +1912,19 @@ mod tests {
         );
         assert!(matches!(effect, Effect::Transform { ticket: 1, .. }));
         assert!(state.busy);
-        assert_eq!(state.message.as_deref(), Some("Denoise is working"));
+        assert_eq!(
+            state.message.as_deref(),
+            Some("Denoise is working. Escape cancels")
+        );
+        assert!(state.long_operation());
+        assert!(!Command::Next.available(&state.availability()));
+        assert!(!Command::Quit.available(&state.availability()));
 
         state.dismiss_message();
-        assert!(state.message.is_none());
+        assert_eq!(
+            state.message.as_deref(),
+            Some("Denoise is working. Escape cancels")
+        );
 
         let finished = state.handle_note(
             Note::Transformed {
@@ -1926,7 +1952,7 @@ mod tests {
         assert!(matches!(started, Effect::Transform { .. }));
         assert_eq!(
             state.message.as_deref(),
-            Some("Super Resolution is working, 4×")
+            Some("Super Resolution is working, 4×. Escape cancels")
         );
         let finished = state.handle_note(
             Note::Transformed {
@@ -1957,6 +1983,34 @@ mod tests {
         assert!(matches!(effect, Effect::Transform { .. }));
         assert!(state.busy);
         assert!(state.message.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn escape_cancels_a_long_edit_and_drops_a_late_result() -> Result<(), String> {
+        let mut state = viewing_picture();
+        let started = state.dispatch(
+            Command::Transform {
+                id: TransformId::new("denoise"),
+                params: Params::None,
+            },
+            Instant::now(),
+        );
+        assert!(matches!(started, Effect::Transform { ticket: 1, .. }));
+        state.cancel_long_operation();
+        assert!(!state.busy);
+        assert!(!state.long_operation());
+        assert!(state.message.is_none());
+        assert!(Command::Next.available(&state.availability()));
+        let late = state.handle_note(
+            Note::Transformed {
+                ticket: 1,
+                result: Ok(vec![frame()]),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert!(matches!(late, Effect::None));
+        assert!(!state.is_dirty());
         Ok(())
     }
 

@@ -157,6 +157,7 @@ pub fn app() -> Element {
     protocol::publish(&state.read());
     let mode = state.read().mode;
     let message = state.read().message.clone();
+    let long_operation = state.read().long_operation();
     let window_keys = window.clone();
     rsx! {
         style { "{CSS}" }
@@ -176,10 +177,14 @@ pub fn app() -> Element {
             }
             {crate::dialogs::view(state, window.clone())}
             if let Some(message) = message {
-                button {
-                    class: "message",
-                    onclick: move |_| state.write().dismiss_message(),
-                    "{message}"
+                if long_operation {
+                    div { class: "message", "{message}" }
+                } else {
+                    button {
+                        class: "message",
+                        onclick: move |_| state.write().dismiss_message(),
+                        "{message}"
+                    }
                 }
             }
         }
@@ -220,13 +225,15 @@ fn on_key(
             effects::run(state, window, effect);
         } else if state.read().dialog.is_some() {
             state.write().dialog = None;
+        } else if state.read().long_operation() {
+            state.write().cancel_long_operation();
         } else {
             let effect = state.write().dispatch(Command::Quit, Instant::now());
             effects::run(state, window, effect);
         }
         return;
     }
-    if state.read().dialog.is_some() {
+    if state.read().dialog.is_some() || state.read().long_operation() {
         return;
     }
     let meta = modifiers.contains(Modifiers::META);

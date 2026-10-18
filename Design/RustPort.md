@@ -16,7 +16,7 @@ One window, two modes. The browser lists a folder. The viewer shows one image or
 
 ### Startup
 
-The window opens at origin (300, 100), size 1024×768, minimum size 1024×768, decorated and resizable. Escape quits, unless a dialog is open. A dialog consumes Escape and cancels.
+The window opens at origin (300, 100), size 1024×768, minimum size 1024×768, decorated and resizable. Escape quits, unless a dialog is open or a long edit is running. A dialog consumes Escape and cancels. A long edit consumes Escape, drops the edit, and leaves the picture as it was.
 
 Fullscreen is only available while a file is open. There is no Full Screen menu item. Double-click on the open file toggles it. Return (Enter, including the numeric keypad) toggles it as well, and Return again leaves fullscreen. The double-click that opened the file from the grid is ignored for 400 ms, so that gesture does not also enter fullscreen. Keyboard Return is not delayed.
 
@@ -153,7 +153,7 @@ These are physical Mac keys. Command is the modifier Dioxus calls Meta. Option i
 | Skip | Shift-Right / Shift-Left | Video |
 | Volume | Shift-Up / Shift-Down | Video |
 | Mute | Shift-M | Video |
-| Quit | Escape | No dialog is open |
+| Quit | Escape | No dialog is open and no long edit is running |
 
 Colour, contrast, and brightness keyboard steps use factors 1.1 and 0.9. Super Resolution requests scale 4. Black and White is colour at factor 0.
 
@@ -493,7 +493,7 @@ enum Command {
 
 `Command::available` is the enablement table in section 1. Menus and the key handler both call it. A new transform does not add a variant. A new transition does not either: `Next`, `Previous`, and `Open` ask the transition registry before swapping the document.
 
-`busy` is true while a transform, save, or crop runs. Further transform commands are refused until it finishes. Denoise and super-resolution leave a note in the message area, naming the edit, until the edit finishes, fails, or the note is clicked away. The stage does not dim.
+`busy` is true while a transform, save, or crop runs. Further transform commands are refused until it finishes. Denoise and super-resolution leave a note in the message area, naming the edit and saying that Escape cancels, until the edit finishes, fails, or Escape cancels it. While that note is showing, the window ignores other input. A result that arrives after Escape is dropped. The stage does not dim.
 
 ## 6. Transforms
 
