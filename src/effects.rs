@@ -27,6 +27,21 @@ pub fn run(mut state: Signal<AppState>, window: DesktopContext, effect: Effect) 
                 wake::post(Note::Loaded { ticket, result });
             });
         }
+        Effect::OpenFile {
+            folder,
+            ticket,
+            path,
+        } => {
+            wake::spawn_blocking(move || {
+                let result =
+                    crate::catalog::list_folder(&folder).map_err(|error| error.to_string());
+                wake::post(Note::Folder(result));
+            });
+            wake::spawn_blocking(move || {
+                let result = document::load(&path).map_err(|error| error.message);
+                wake::post(Note::Loaded { ticket, result });
+            });
+        }
         Effect::Save { ticket } => {
             let image = state.read().image().cloned();
             let stamp = document::local_stamp(chrono::Local::now());

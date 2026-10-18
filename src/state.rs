@@ -59,6 +59,11 @@ pub enum Effect {
         ticket: u64,
         path: PathBuf,
     },
+    OpenFile {
+        folder: PathBuf,
+        ticket: u64,
+        path: PathBuf,
+    },
     Save {
         ticket: u64,
     },
@@ -726,12 +731,22 @@ impl AppState {
             .filter(|parent| !parent.as_os_str().is_empty())
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("/"));
-        if self.folder.path != parent || self.folder.entries.is_empty() {
-            self.pending_file = Some(path);
-            return self.leave_for(parent);
+        let needs_folder = self.folder.path != parent || self.folder.entries.is_empty();
+        if needs_folder {
+            self.pending_file = Some(path.clone());
+            self.remember();
+        } else {
+            self.highlight_path(&path);
         }
-        self.highlight_path(&path);
-        self.begin_load(path, false)
+        self.mode = Mode::Viewer;
+        match self.begin_load(path, false) {
+            Effect::LoadFile { ticket, path } if needs_folder => Effect::OpenFile {
+                folder: parent,
+                ticket,
+                path,
+            },
+            effect => effect,
+        }
     }
 
     fn leave_for(&mut self, path: PathBuf) -> Effect {
@@ -1094,15 +1109,17 @@ impl AppState {
                 self.install_folder(folder);
                 if let Some(path) = self.pending_file.take() {
                     self.highlight_path(&path);
-                    self.begin_load(path, false)
-                } else {
-                    Effect::None
                 }
+                Effect::None
             }
             Note::Folder(Err(message)) => {
                 tracing::warn!(%message, "could not list the folder");
+                self.pending_file = None;
                 self.message = Some(message);
                 self.busy = false;
+                if self.document.is_none() {
+                    self.mode = Mode::Browser;
+                }
                 Effect::None
             }
             Note::Loaded { ticket, result } => {
@@ -1119,6 +1136,9 @@ impl AppState {
                     Err(message) => {
                         tracing::warn!(%message, "could not open the file");
                         self.message = Some(message);
+                        if self.document.is_none() {
+                            self.mode = Mode::Browser;
+                        }
                         Effect::None
                     }
                 }
@@ -1386,6 +1406,32 @@ mod tests {
             muted: false,
             size: (320, 180),
         })
+    }
+
+    #[test]
+    fn opening_a_file_shows_the_viewer_before_the_folder_is_listed() {
+        let mut state = AppState::new();
+        assert_eq!(state.mode, Mode::Browser);
+        let effect = state.open_path(PathBuf::from("/pictures/a.png"));
+        assert_eq!(state.mode, Mode::Viewer);
+        assert!(matches!(effect, Effect::OpenFile { ticket: 1, .. }));
+        let folder = FolderView {
+            path: PathBuf::from("/pictures"),
+            entries: vec![Entry {
+                path: PathBuf::from("/pictures/a.png"),
+                kind: EntryKind::Image,
+                label: "a".into(),
+            }],
+            highlighted: 0,
+            scroll_top: 0.0,
+            error: None,
+        };
+        let after = state.handle_note(Note::Folder(Ok(folder)), &TransitionRegistry::builtin());
+        assert!(matches!(after, Effect::None));
+        assert_eq!(state.load_ticket, 1);
+        assert_eq!(state.mode, Mode::Viewer);
+        assert_eq!(state.folder.highlighted, 0);
+        assert!(state.pending_file.is_none());
     }
 
     fn image_doc(name: &str) -> Document {
