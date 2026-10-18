@@ -29,7 +29,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     let kind = entry.kind;
                     let src = thumb_src(generation, index, px, kind);
                     let message = thumb_message(generation, index, px, kind);
-                    let badge = video_badge(generation, index, px, kind);
+                    let badge = video_badge(generation, index, px);
                     let class = if selected { "cell selected" } else { "cell" };
                     let window = window.clone();
                     rsx! {
@@ -68,23 +68,22 @@ fn thumb_src(generation: u64, index: usize, px: u32, kind: EntryKind) -> Option<
     match kind {
         EntryKind::Parent | EntryKind::Directory => Some("app://icon/folder.png".into()),
         EntryKind::Video => match protocol::thumb_status(generation, index, px) {
-            ThumbStatus::Ready => Some(format!("app://thumb/{generation}/{index}?s={px}")),
+            ThumbStatus::Ready { .. } => Some(format!("app://thumb/{generation}/{index}?s={px}")),
             ThumbStatus::Failed(_) => Some("app://icon/video.png".into()),
             ThumbStatus::Missing => None,
         },
         EntryKind::Image => match protocol::thumb_status(generation, index, px) {
-            ThumbStatus::Ready => Some(format!("app://thumb/{generation}/{index}?s={px}")),
+            ThumbStatus::Ready { .. } => Some(format!("app://thumb/{generation}/{index}?s={px}")),
             _ => None,
         },
     }
 }
 
-fn video_badge(generation: u64, index: usize, px: u32, kind: EntryKind) -> bool {
-    kind == EntryKind::Video
-        && matches!(
-            protocol::thumb_status(generation, index, px),
-            ThumbStatus::Ready
-        )
+fn video_badge(generation: u64, index: usize, px: u32) -> bool {
+    matches!(
+        protocol::thumb_status(generation, index, px),
+        ThumbStatus::Ready { animated: true }
+    )
 }
 
 fn thumb_message(generation: u64, index: usize, px: u32, kind: EntryKind) -> Option<String> {

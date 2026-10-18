@@ -105,13 +105,13 @@ fn worker(rx: std::sync::Arc<std::sync::Mutex<Receiver<Job>>>) {
     }
 }
 
-fn decode_video_thumb(path: &std::path::Path, px: u32) -> Result<Vec<u8>, String> {
+fn decode_video_thumb(path: &std::path::Path, px: u32) -> Result<(Vec<u8>, bool), String> {
     let frame = super::video_frame::frame(path, px)?;
     let contained = contain(&frame, px)?;
-    encode_png(&contained)
+    Ok((encode_png(&contained)?, true))
 }
 
-fn decode_thumb(path: &std::path::Path, px: u32) -> Result<Vec<u8>, String> {
+fn decode_thumb(path: &std::path::Path, px: u32) -> Result<(Vec<u8>, bool), String> {
     let document = document::load(path).map_err(|error| error.message)?;
     let Document::Image(image) = document else {
         return Err("this file is not an image".into());
@@ -121,7 +121,7 @@ fn decode_thumb(path: &std::path::Path, px: u32) -> Result<Vec<u8>, String> {
         .first()
         .ok_or_else(|| "the image has no frames".to_string())?;
     let contained = contain(&frame.image, px)?;
-    encode_png(&contained)
+    Ok((encode_png(&contained)?, image.is_animation()))
 }
 
 fn contain(image: &RgbaImage, px: u32) -> Result<RgbaImage, String> {

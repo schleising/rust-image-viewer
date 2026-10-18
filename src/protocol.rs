@@ -12,13 +12,14 @@ use std::sync::{Arc, Mutex};
 
 pub enum ThumbStatus {
     Missing,
-    Ready,
+    Ready { animated: bool },
     Failed(String),
 }
 
 struct Thumb {
     png: Vec<u8>,
     error: Option<String>,
+    animated: bool,
 }
 
 struct Store {
@@ -94,21 +95,33 @@ pub fn thumb_status(generation: u64, index: usize, px: u32) -> ThumbStatus {
         None => ThumbStatus::Missing,
         Some(thumb) => match &thumb.error {
             Some(message) => ThumbStatus::Failed(message.clone()),
-            None => ThumbStatus::Ready,
+            None => ThumbStatus::Ready {
+                animated: thumb.animated,
+            },
         },
     }
 }
 
-pub fn store_thumb(generation: u64, index: usize, px: u32, result: Result<Vec<u8>, String>) {
+pub fn store_thumb(
+    generation: u64,
+    index: usize,
+    px: u32,
+    result: Result<(Vec<u8>, bool), String>,
+) {
     let mut store = wake::lock(&*STORE);
     if generation != store.folder_gen {
         return;
     }
     let thumb = match result {
-        Ok(png) => Thumb { png, error: None },
+        Ok((png, animated)) => Thumb {
+            png,
+            error: None,
+            animated,
+        },
         Err(message) => Thumb {
             png: Vec::new(),
             error: Some(message),
+            animated: false,
         },
     };
     store.thumbs.insert((generation, index, px), thumb);
