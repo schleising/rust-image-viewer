@@ -28,7 +28,7 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: light-dark(#ececec, #101010); touch-action: none; }
 .frame, video { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; background: transparent; }
 .selection { position: absolute; z-index: 4; box-sizing: border-box; background: rgba(30, 144, 255, 0.5); border: 1px solid rgb(30, 144, 255); pointer-events: none; }
-.scrubber { position: absolute; z-index: 4; left: 100px; right: 100px; bottom: 100px; height: 4px; background: rgba(30, 144, 255, 0.5); pointer-events: none; }
+.scrubber { position: absolute; z-index: 6; left: 100px; right: 100px; bottom: 100px; height: 4px; background: rgba(30, 144, 255, 0.5); pointer-events: none; }
 .scrubber .mark { position: absolute; top: -2px; width: 8px; height: 8px; background: white; }
 .dialog-back { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; }
 .dialog { background: light-dark(#fff, #2c2c2c); color: inherit; padding: 16px 18px; min-width: 280px; border-radius: 8px; }
