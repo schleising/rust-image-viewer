@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 pub const ZOOM_STEP: f64 = 1.05;
 pub const WHEEL_PIXELS: f64 = 50.0;
+const CLICK_SLOP: f64 = 3.0;
 const DEBOUNCE: Duration = Duration::from_millis(20);
 const OPEN_FULLSCREEN_GUARD: Duration = Duration::from_millis(400);
 
@@ -119,7 +120,6 @@ pub struct AppState {
     pub opened_at: Option<Instant>,
     pub scrub_visible: bool,
     pub scrub_token: u64,
-    pub wheel_accum: f64,
     pub drag: Option<Drag>,
     pub last_command: Option<String>,
     pub last_command_at: Option<Instant>,
@@ -133,6 +133,23 @@ pub struct Drag {
     pub last: (f64, f64),
     pub control: bool,
     pub origin: (f64, f64),
+    pub fitted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shell {
+    pub title: String,
+    pub fullscreen: bool,
+    pub availability: Availability,
+    pub folder_generation: u64,
+    pub view_size: (f64, f64),
+    pub scale_factor: f64,
+    pub video_epoch: u64,
+    pub image_generation: u64,
+    pub frame_index: usize,
+    pub preview_ticket: u64,
+    pub has_preview: bool,
+    pub thumb_epoch: u64,
 }
 
 impl Default for AppState {
@@ -182,7 +199,6 @@ impl AppState {
             opened_at: None,
             scrub_visible: false,
             scrub_token: 0,
-            wheel_accum: 0.0,
             drag: None,
             last_command: None,
             last_command_at: None,
@@ -219,6 +235,23 @@ impl AppState {
 
     pub fn is_dirty(&self) -> bool {
         matches!(&self.document, Some(Document::Image(image)) if image.is_dirty())
+    }
+
+    pub fn shell(&self) -> Shell {
+        Shell {
+            title: self.title(),
+            fullscreen: self.fullscreen,
+            availability: self.availability(),
+            folder_generation: self.folder_generation,
+            view_size: self.view_size,
+            scale_factor: self.scale_factor,
+            video_epoch: self.video_epoch,
+            image_generation: self.image_generation,
+            frame_index: self.frame_index,
+            preview_ticket: self.preview_ticket,
+            has_preview: self.preview.is_some(),
+            thumb_epoch: self.thumb_epoch,
+        }
     }
 
     pub fn availability(&self) -> Availability {
@@ -943,11 +976,11 @@ impl AppState {
         let Some(size) = self.pixel_size() else {
             return;
         };
-        let steps = wheel_steps(lines, delta_y, &mut self.wheel_accum);
-        if steps == 0 {
+        let exponent = wheel_exponent(lines, delta_y);
+        if exponent == 0.0 {
             return;
         }
-        let factor = ZOOM_STEP.powi(-steps);
+        let factor = ZOOM_STEP.powf(-exponent);
         self.viewport
             .zoom_at(self.view_size, size, at.0, at.1, factor);
     }
@@ -961,6 +994,7 @@ impl AppState {
             last: at,
             control,
             origin: self.viewport.translation,
+            fitted: self.viewport.fitted,
         });
     }
 
@@ -978,12 +1012,8 @@ impl AppState {
                         .selection_from_drag(self.view_size, size, start, at);
             }
         } else {
-            let dx = at.0 - start.0;
-            let dy = at.1 - start.1;
-            if dx.hypot(dy) >= 3.0 {
-                self.viewport.fitted = false;
-                self.viewport.translation = (origin.0 + dx, origin.1 + dy);
-            }
+            self.viewport.fitted = false;
+            self.viewport.translation = (origin.0 + (at.0 - start.0), origin.1 + (at.1 - start.1));
         }
         if let Some(drag) = self.drag.as_mut() {
             drag.last = at;
@@ -994,7 +1024,7 @@ impl AppState {
         let Some(drag) = self.drag.take() else {
             return;
         };
-        let moved = (at.0 - drag.start.0).hypot(at.1 - drag.start.1) >= 3.0;
+        let moved = (at.0 - drag.start.0).hypot(at.1 - drag.start.1) >= CLICK_SLOP;
         if drag.control {
             if let Some(size) = self.pixel_size() {
                 self.viewport.selection =
@@ -1002,6 +1032,8 @@ impl AppState {
                         .selection_from_drag(self.view_size, size, drag.start, at);
             }
         } else if !moved {
+            self.viewport.translation = drag.origin;
+            self.viewport.fitted = drag.fitted;
             self.viewport.selection = None;
         }
     }
@@ -1011,18 +1043,15 @@ impl AppState {
     }
 }
 
-pub fn wheel_steps(lines: bool, delta_y: f64, accum: &mut f64) -> i32 {
-    if !delta_y.is_finite() {
-        return 0;
+pub fn wheel_exponent(lines: bool, delta_y: f64) -> f64 {
+    if !delta_y.is_finite() || delta_y == 0.0 {
+        return 0.0;
     }
     if lines {
-        *accum += delta_y;
+        delta_y
     } else {
-        *accum += delta_y / WHEEL_PIXELS;
+        delta_y / WHEEL_PIXELS
     }
-    let steps = accum.trunc() as i32;
-    *accum -= f64::from(steps);
-    steps
 }
 
 #[cfg(test)]
@@ -1196,12 +1225,49 @@ mod tests {
     }
 
     #[test]
-    fn wheel_lines_are_steps_and_pixels_accumulate() {
-        let mut accum = 0.0;
-        assert_eq!(wheel_steps(true, -1.0, &mut accum), -1);
-        assert_eq!(accum, 0.0);
-        assert_eq!(wheel_steps(false, -20.0, &mut accum), 0);
-        assert_eq!(wheel_steps(false, -30.0, &mut accum), -1);
+    fn wheel_tracks_the_pointer_without_waiting_for_a_full_step() {
+        assert_eq!(wheel_exponent(true, -1.0), -1.0);
+        assert_eq!(wheel_exponent(false, -25.0), -0.5);
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (200.0, 100.0);
+        state.document = Some(image_doc("/pictures/a.png"));
+        let size = state.pixel_size().unwrap_or((0, 0));
+        state.viewport.refit(state.view_size, size);
+        let at = (40.0, 30.0);
+        let before = state
+            .viewport
+            .image_point(state.view_size, size, at.0, at.1);
+        state.on_wheel(false, -25.0, at);
+        let after = state
+            .viewport
+            .image_point(state.view_size, size, at.0, at.1);
+        assert!((before.0 - after.0).abs() < 1e-6);
+        assert!((before.1 - after.1).abs() < 1e-6);
+        let expected = ZOOM_STEP.powf(0.5);
+        assert!((state.viewport.scale - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pan_follows_the_pointer_and_a_click_returns() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (200.0, 100.0);
+        state.viewport.translation = (12.0, 8.0);
+        state.viewport.fitted = true;
+        state.pointer_down((10.0, 10.0), false);
+        state.pointer_move((18.0, 14.0));
+        assert_eq!(state.viewport.translation, (20.0, 12.0));
+        assert!(!state.viewport.fitted);
+        state.pointer_up((18.0, 14.0));
+        assert_eq!(state.viewport.translation, (20.0, 12.0));
+
+        state.pointer_down((10.0, 10.0), false);
+        state.pointer_move((11.0, 10.0));
+        assert_eq!(state.viewport.translation, (21.0, 12.0));
+        state.pointer_up((11.0, 10.0));
+        assert_eq!(state.viewport.translation, (20.0, 12.0));
+        assert!(!state.viewport.fitted);
     }
 
     #[test]

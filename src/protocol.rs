@@ -48,13 +48,24 @@ static STORE: std::sync::LazyLock<Mutex<Store>> = std::sync::LazyLock::new(|| {
 });
 
 pub fn publish(state: &AppState) {
-    let mut store = wake::lock(&*STORE);
     let generation = state.image_generation;
     let ticket = if state.preview.is_some() {
         state.preview_ticket
     } else {
         0
     };
+    let frame = state.frame_index;
+    let folder_gen = state.folder_generation;
+    let has_preview = state.preview.is_some();
+    let mut store = wake::lock(&*STORE);
+    if store.image_gen == generation
+        && store.frame == frame
+        && store.preview_ticket == ticket
+        && store.folder_gen == folder_gen
+        && store.preview.is_some() == has_preview
+    {
+        return;
+    }
     store
         .encoded
         .retain(|(gen, _, cached_ticket), _| *gen == generation && *cached_ticket == ticket);
@@ -188,12 +199,7 @@ fn image_response(query: &str) -> Response<Cow<'static, [u8]>> {
             wake::lock(&*STORE)
                 .encoded
                 .insert(cache_key, (bytes.clone(), mime));
-            bytes_response(
-                200,
-                mime,
-                bytes,
-                &[("Cache-Control", "no-store".into())],
-            )
+            bytes_response(200, mime, bytes, &[("Cache-Control", "no-store".into())])
         }
         Err(error) => {
             tracing::warn!(%error, "could not encode the frame");
@@ -345,12 +351,18 @@ mod tests {
 
     #[test]
     fn custom_scheme_urls_keep_the_first_segment() {
-        let icon: http::Uri = "app://icon/folder.png".parse().unwrap_or_else(|_| http::Uri::from_static("/"));
+        let icon: http::Uri = "app://icon/folder.png"
+            .parse()
+            .unwrap_or_else(|_| http::Uri::from_static("/"));
         assert_eq!(request_path(&icon), "/icon/folder.png");
-        let thumb: http::Uri = "app://thumb/3/4?s=128".parse().unwrap_or_else(|_| http::Uri::from_static("/"));
+        let thumb: http::Uri = "app://thumb/3/4?s=128"
+            .parse()
+            .unwrap_or_else(|_| http::Uri::from_static("/"));
         assert_eq!(request_path(&thumb), "/thumb/3/4");
         assert_eq!(thumb.query(), Some("s=128"));
-        let rooted: http::Uri = "app://localhost/image/current".parse().unwrap_or_else(|_| http::Uri::from_static("/"));
+        let rooted: http::Uri = "app://localhost/image/current"
+            .parse()
+            .unwrap_or_else(|_| http::Uri::from_static("/"));
         assert_eq!(request_path(&rooted), "/image/current");
     }
 

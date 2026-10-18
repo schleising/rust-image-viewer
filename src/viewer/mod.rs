@@ -25,7 +25,13 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
     let geometry = media_style(view_size, size, scale, translation, fitted);
     rsx! {
         div {
+            id: "stage",
             class: "{class}",
+            onmounted: move |_| {
+                dioxus::document::eval(
+                    "(() => { const stage = document.getElementById('stage'); if (!stage || stage.dataset.capture) return; stage.dataset.capture = '1'; stage.addEventListener('pointerdown', (event) => { if (event.button === 0) stage.setPointerCapture(event.pointerId); }); })()",
+                );
+            },
             onwheel: move |event| {
                 event.prevent_default();
                 let point = event.data().element_coordinates();
@@ -156,9 +162,9 @@ fn media_style(
     let width = base_width * factor;
     let height = base_height * factor;
     format!(
-        "position:absolute;left:{left}px;top:{top}px;width:{width}px;height:{height}px;",
-        left = translation.0,
-        top = translation.1,
+        "position:absolute;left:0;top:0;width:{width}px;height:{height}px;transform:translate({x}px,{y}px);",
+        x = translation.0,
+        y = translation.1,
     )
 }
 
