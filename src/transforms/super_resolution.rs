@@ -103,7 +103,10 @@ fn output_luma(
     height: usize,
     scale: u8,
 ) -> Result<Vec<f32>, TransformError> {
-    let view = tensor
+    let plain = tensor
+        .try_as_plain_ram()
+        .map_err(|error| TransformError::Failed(error.to_string()))?;
+    let view = plain
         .to_array_view::<f32>()
         .map_err(|error| TransformError::Failed(error.to_string()))?;
     let shape = view.shape();

@@ -8,27 +8,27 @@ description = "Browse, view, and edit images and videos"
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.3", features = ["desktop"] }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
-image-webp = "0.2"
-fast_image_resize = "5"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-file-rotate = "0.8"
-chrono = "0.4"
-objc2 = "0.6"
-dispatch2 = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
-tract-onnx = "0.22"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+image-webp = "0.2.4"
+fast_image_resize = "6.1.0"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+file-rotate = "0.8.0"
+chrono = "0.4.45"
+objc2 = "0.6.5"
+dispatch2 = "0.3.1"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "time", "sync"] }
+tract-onnx = "0.23.9"
 objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVAsset", "AVAssetImageGenerator", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSURL", "NSError"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
 objc2-core-media = { version = "0.3.2", default-features = false, features = ["CMTime"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSEvent"] }
-block2 = "0.6"
+block2 = "0.6.2"
 
 [dev-dependencies]
-gif = "0.13"
+gif = "0.14.2"
 
 [lints.clippy]
 unwrap_used = "deny"
