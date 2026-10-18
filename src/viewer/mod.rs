@@ -19,7 +19,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         view_size,
         selection,
         scrub,
+        scrub_shown,
         place,
+        place_shown,
         show_front,
         front,
         back,
@@ -53,11 +55,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             snapshot.view_size,
             selection_style(&snapshot),
             scrub_style(&snapshot),
-            if snapshot.place_visible {
-                snapshot.place_label()
-            } else {
-                None
-            },
+            snapshot.scrub_visible,
+            snapshot.place_label(),
+            snapshot.place_visible,
             snapshot.show_front,
             snapshot.front.clone(),
             snapshot.back.clone(),
@@ -218,7 +218,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 div { class: "selection", style: "{style}" }
             }
             if let Some(paint) = scrub {
-                div { class: "scrubber",
+                div { class: if scrub_shown { "scrubber shown" } else { "scrubber" },
                     div { class: "scrubber-fill", style: "{paint.fill}" }
                     if let Some(span) = paint.span {
                         div { class: "loop-span", style: "{span}" }
@@ -233,7 +233,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 }
             }
             if let Some(place) = place {
-                div { class: "place", "{place}" }
+                div { class: if place_shown { "place shown" } else { "place" }, "{place}" }
             }
         }
     }
@@ -426,7 +426,7 @@ fn timeline_percent(time: f64, duration: f64) -> Option<f64> {
 
 fn scrub_style(state: &AppState) -> Option<ScrubPaint> {
     let clock = state.playback_clock()?;
-    if !state.scrub_visible || clock.duration <= 0.0 {
+    if clock.duration <= 0.0 {
         return None;
     }
     let percent = timeline_percent(clock.position, clock.duration).unwrap_or(0.0);
@@ -583,7 +583,7 @@ mod tests {
             assert!(paint.span.is_none());
         }
         state.scrub_visible = false;
-        assert!(scrub_style(&state).is_none());
+        assert!(scrub_style(&state).is_some());
     }
 
     #[test]
