@@ -41,6 +41,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 state.write().on_wheel(lines, delta_y, (point.x, point.y));
             },
             onpointerdown: move |event| {
+                event.prevent_default();
                 let point = event.data().element_coordinates();
                 if scrub_hit(&state.read(), point.y) {
                     let fraction = scrub_fraction(&state.read(), point.x);

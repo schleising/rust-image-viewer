@@ -13,8 +13,10 @@ use dioxus::prelude::*;
 use std::time::{Duration, Instant};
 
 const CSS: &str = r#"
-html, body { margin: 0; height: 100%; background: #111; }
-#root { height: 100vh; outline: none; color-scheme: light dark; background: light-dark(#f3f3f3, #161616); color: light-dark(#111, #eee); font: 13px -apple-system, BlinkMacSystemFont, sans-serif; position: relative; }
+html, body { margin: 0; height: 100%; background: #111; -webkit-user-select: none; user-select: none; }
+#root { height: 100vh; outline: none; color-scheme: light dark; background: light-dark(#f3f3f3, #161616); color: light-dark(#111, #eee); font: 13px -apple-system, BlinkMacSystemFont, sans-serif; position: relative; -webkit-user-select: none; user-select: none; }
+img, button, .label, .stage { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+.dialog, .dialog * { -webkit-user-select: text; user-select: text; }
 .browser { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); align-content: start; overflow: auto; height: 100%; }
 .cell { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 8px; border: 0; background: transparent; color: inherit; text-align: center; min-width: 0; }
 .cell.selected { background: rgba(30, 144, 255, 0.5); }
@@ -25,7 +27,7 @@ html, body { margin: 0; height: 100%; background: #111; }
 .label { white-space: nowrap; overflow: hidden; }
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: light-dark(#ececec, #101010); touch-action: none; }
 .stage.busy .frame, .stage.busy #player { opacity: 0.55; }
-.frame, #player { user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; }
+.frame, #player { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; }
 .selection { position: absolute; box-sizing: border-box; background: rgba(30, 144, 255, 0.5); border: 1px solid rgb(30, 144, 255); pointer-events: none; }
 .scrubber { position: absolute; left: 100px; right: 100px; bottom: 100px; height: 4px; background: rgba(30, 144, 255, 0.5); pointer-events: none; }
 .scrubber .mark { position: absolute; top: -2px; width: 8px; height: 8px; background: white; }
@@ -150,7 +152,9 @@ pub fn app() -> Element {
             id: "root",
             tabindex: "0",
             onmounted: move |_| {
-                dioxus::document::eval("document.getElementById('root')?.focus()");
+                dioxus::document::eval(
+                    "(() => { document.getElementById('root')?.focus(); if (document.documentElement.dataset.noselect) return; document.documentElement.dataset.noselect = '1'; const block = (event) => { if (event.target && event.target.closest && event.target.closest('.dialog')) return; event.preventDefault(); }; document.addEventListener('selectstart', block); document.addEventListener('dragstart', block); document.addEventListener('mouseup', () => window.getSelection()?.removeAllRanges()); })()",
+                );
             },
             onkeydown: move |event| on_key(state, window_keys.clone(), event),
             if mode == Mode::Browser {
