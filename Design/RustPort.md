@@ -102,7 +102,7 @@ The picture already on screen stays until the next one has finished loading. Two
 
 Control-drag (the Control key, not Command) draws a selection in image pixels. The overlay is `rgb(30, 144, 255)` at 50% alpha with a solid blue border, clipped to the image. A primary click without Control clears it. Zoom to Rect frames that rectangle, aspect preserved, and leaves fitted mode. Crop to Rect commits the clamped pixel rectangle and clears the selection. Reset Zoom fits the image again. Any committed edit also returns to fit and clears the selection.
 
-Left and Right move through the supported files in the current folder and wrap. A two-finger swipe does the same. Swiping so the picture moves left goes to the next file. Swiping the other way goes to the previous file. About 80 pixels of one finger gesture counts as one swipe, and that gesture changes one file. The coast after the fingers lift does not change another file. The next gesture, in either direction, changes one file. A movement that is more vertical than horizontal still zooms. Up returns to the browser. The title becomes `{folder stem} - {file stem}`.
+Left and Right move through the supported files in the current folder and wrap. A two-finger swipe does the same. Swiping so the picture moves left goes to the next file. Swiping the other way goes to the previous file. About 80 pixels of one finger gesture counts as one swipe, and that gesture changes one file. The coast after the fingers lift does not change another file. The next gesture, in either direction, changes one file. A movement that is more vertical than horizontal still zooms. Up returns to the browser. The title becomes `{folder stem} - {file stem}`. Moving the pointer, or moving to another file, shows the file's place among the media in the folder, such as `12 / 40`, in the bottom-right corner. It hides 500 ms after that movement, the same pause as the video progress bar.
 
 Edits push the previous frame list on an undo stack capped at 16. The oldest entry is dropped past that. Undo pops. The document is dirty when the current frame list is not the list that was last saved (or the list loaded from disk, if it has never been saved). The title gains a trailing ` *` while it is dirty. A successful save clears that: Save becomes disabled, and the star comes off the title. Undo stays available. Undoing back onto the saved list clears the star again. Undoing past it, or making another edit, sets the star again.
 
@@ -174,6 +174,7 @@ Colour, contrast, and brightness keyboard steps use factors 1.1 and 0.9. Super R
 | Fullscreen double-click guard | 400 ms after the file opened |
 | Wheel step | 1.05 per 50 pixels of movement |
 | Horizontal swipe | 80 pixels of one finger gesture |
+| Folder position | bottom-right, hides after 500 ms |
 | Animation size limit | 256 MiB of composited frames for one document |
 | GIF short delay | Stored 0 or 1 centiseconds displays as 100 ms |
 | Slider domain | 0–20, divided by 10 |

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 pub const ZOOM_STEP: f64 = 1.05;
 pub const WHEEL_PIXELS: f64 = 50.0;
 const CLICK_SLOP: f64 = 3.0;
+const PLACE_HIDE: Duration = Duration::from_millis(500);
 const DEBOUNCE: Duration = Duration::from_millis(20);
 const OPEN_FULLSCREEN_GUARD: Duration = Duration::from_millis(400);
 
@@ -127,6 +128,8 @@ pub struct AppState {
     pub opened_at: Option<Instant>,
     pub scrub_visible: bool,
     pub scrub_token: u64,
+    pub place_visible: bool,
+    place_until: Option<Instant>,
     pub drag: Option<Drag>,
     pub last_command: Option<String>,
     pub last_command_at: Option<Instant>,
@@ -236,6 +239,8 @@ impl AppState {
             opened_at: None,
             scrub_visible: false,
             scrub_token: 0,
+            place_visible: false,
+            place_until: None,
             drag: None,
             last_command: None,
             last_command_at: None,
@@ -805,6 +810,7 @@ impl AppState {
             return Effect::None;
         };
         self.highlight_path(&path);
+        self.reveal_place(Instant::now());
         self.begin_load(path, true)
     }
 
@@ -894,6 +900,7 @@ impl AppState {
         self.opened_at = Some(Instant::now());
         self.message = None;
         self.scrub_visible = false;
+        self.reveal_place(Instant::now());
         self.bump_anim();
     }
 
@@ -911,6 +918,8 @@ impl AppState {
         self.front = FrameLayer::blank();
         self.back = FrameLayer::blank();
         self.clear_video_slots();
+        self.place_visible = false;
+        self.place_until = None;
         self.bump_anim();
     }
 
@@ -1079,6 +1088,37 @@ impl AppState {
         if self.scrub_token == token {
             self.scrub_visible = false;
         }
+    }
+
+    pub fn reveal_place(&mut self, now: Instant) {
+        self.place_visible = true;
+        self.place_until = Some(now + PLACE_HIDE);
+    }
+
+    pub fn place_is_due(&self, now: Instant) -> bool {
+        self.place_until.is_some_and(|until| now >= until)
+    }
+
+    pub fn hide_place_if_due(&mut self, now: Instant) {
+        let Some(until) = self.place_until else {
+            return;
+        };
+        if now < until {
+            return;
+        }
+        self.place_until = None;
+        self.place_visible = false;
+    }
+
+    pub fn place_label(&self) -> Option<String> {
+        let paths = catalog::media_paths(&self.folder);
+        let total = paths.len();
+        if total == 0 {
+            return None;
+        }
+        let current = self.document.as_ref().map(Document::path)?;
+        let index = paths.iter().position(|path| path == current)?;
+        Some(format!("{} / {total}", index + 1))
     }
 
     pub fn animation_delay(&self) -> Option<Duration> {
@@ -1776,6 +1816,29 @@ mod tests {
             previous,
             Effect::LoadFile { ref path, .. } if path.ends_with("a.png")
         ));
+    }
+
+    #[test]
+    fn the_place_overlay_names_the_file_and_then_hides() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.folder = folder();
+        state.folder.entries.push(Entry {
+            path: PathBuf::from("/pictures/c.png"),
+            kind: EntryKind::Image,
+            label: "c".into(),
+        });
+        state.document = Some(image_doc("/pictures/b.png"));
+        assert_eq!(state.place_label().as_deref(), Some("2 / 3"));
+        let now = Instant::now();
+        state.reveal_place(now);
+        assert!(state.place_visible);
+        state.hide_place_if_due(now + Duration::from_millis(499));
+        assert!(state.place_visible);
+        assert!(state.place_is_due(now + PLACE_HIDE));
+        state.hide_place_if_due(now + PLACE_HIDE);
+        assert!(!state.place_visible);
+        assert!(state.place_label().is_some());
     }
 
     #[test]

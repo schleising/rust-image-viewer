@@ -19,6 +19,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         view_size,
         selection,
         scrub,
+        place,
         show_front,
         front,
         back,
@@ -52,6 +53,11 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             snapshot.view_size,
             selection_style(&snapshot),
             scrub_style(&snapshot),
+            if snapshot.place_visible {
+                snapshot.place_label()
+            } else {
+                None
+            },
             snapshot.show_front,
             snapshot.front.clone(),
             snapshot.back.clone(),
@@ -116,6 +122,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             onpointermove: move |event| {
                 let point = event.data().element_coordinates();
                 state.write().pointer_move((point.x, point.y));
+                state.write().reveal_place(std::time::Instant::now());
                 if state.read().video().is_some() {
                     let token = state.write().poke_scrub();
                     spawn(async move {
@@ -164,6 +171,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     div { class: "scrubber-fill", style: "{fill}" }
                     div { class: "mark", style: "{mark}" }
                 }
+            }
+            if let Some(place) = place {
+                div { class: "place", "{place}" }
             }
         }
     }

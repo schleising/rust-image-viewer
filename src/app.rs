@@ -40,6 +40,7 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .slider input { width: 160px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .message { position: absolute; z-index: 7; left: 12px; right: 12px; top: 12px; background: rgba(0, 0, 0, 0.78); color: white; padding: 8px 10px; border-radius: 6px; }
+.place { position: absolute; z-index: 7; right: 16px; bottom: 16px; padding: 4px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); color: white; font-variant-numeric: tabular-nums; pointer-events: none; }
 "#;
 
 pub fn app() -> Element {
@@ -58,6 +59,10 @@ pub fn app() -> Element {
         });
         spawn(async move {
             loop {
+                let due = state.read().place_is_due(Instant::now());
+                if due {
+                    state.write().hide_place_if_due(Instant::now());
+                }
                 let (token, delay) = {
                     let current = state.read();
                     (current.anim_token, current.animation_delay())
