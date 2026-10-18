@@ -105,7 +105,6 @@ pub fn app() -> Element {
             window.set_title(&state.read().title());
             window.set_fullscreen(state.read().fullscreen);
             menu::sync(&state.read().availability());
-            protocol::publish(&state.read());
             crate::browser::schedule(&state.read());
             let epoch = state.read().video_epoch;
             if epoch != synced() {
@@ -133,6 +132,7 @@ pub fn app() -> Element {
         }
     });
 
+    protocol::publish(&state.read());
     let mode = state.read().mode;
     let message = state.read().message.clone();
     let window_keys = window.clone();

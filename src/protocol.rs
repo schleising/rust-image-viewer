@@ -188,7 +188,12 @@ fn image_response(query: &str) -> Response<Cow<'static, [u8]>> {
             wake::lock(&*STORE)
                 .encoded
                 .insert(cache_key, (bytes.clone(), mime));
-            bytes_response(200, mime, bytes, &[])
+            bytes_response(
+                200,
+                mime,
+                bytes,
+                &[("Cache-Control", "no-store".into())],
+            )
         }
         Err(error) => {
             tracing::warn!(%error, "could not encode the frame");
