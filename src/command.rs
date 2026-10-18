@@ -120,6 +120,7 @@ pub fn commands_for_key(mods: Mods, key: ShortcutKey) -> Vec<Command> {
             ShortcutKey::Right => commands.push(Command::Next),
             ShortcutKey::Up => commands.push(Command::ReturnToBrowser),
             ShortcutKey::Space => commands.push(Command::PlayPause),
+            ShortcutKey::Enter => commands.push(Command::ToggleFullscreen),
             _ => {}
         }
     }
@@ -275,6 +276,11 @@ mod tests {
 
         image.animated = true;
         assert!(Command::PlayPause.available(&image));
+
+        let enter = commands_for_key(Mods::default(), ShortcutKey::Enter);
+        assert_eq!(enter, vec![Command::ToggleFullscreen]);
+        assert!(enter[0].available(&image));
+        assert!(!enter[0].available(&browser));
 
         let mut video = flags();
         video.viewing = true;

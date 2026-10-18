@@ -297,6 +297,7 @@ fn shortcut_key(code: Code) -> Option<ShortcutKey> {
         Code::ArrowUp => ShortcutKey::Up,
         Code::ArrowDown => ShortcutKey::Down,
         Code::Space => ShortcutKey::Space,
+        Code::Enter | Code::NumpadEnter => ShortcutKey::Enter,
         Code::KeyA => ShortcutKey::Char('a'),
         Code::KeyB => ShortcutKey::Char('b'),
         Code::KeyC => ShortcutKey::Char('c'),

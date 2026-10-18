@@ -600,6 +600,11 @@ impl AppState {
         (css * self.scale_factor).round().clamp(1.0, 2048.0) as u32
     }
 
+    pub fn open_fullscreen_guard(&self, now: Instant) -> bool {
+        self.opened_at
+            .is_some_and(|opened| now.saturating_duration_since(opened) < OPEN_FULLSCREEN_GUARD)
+    }
+
     pub fn dispatch(&mut self, command: Command, now: Instant) -> Effect {
         let key = command.id_key();
         if self.last_command.as_deref() == Some(key.as_str()) {
@@ -628,11 +633,6 @@ impl AppState {
             Command::Previous => self.step_media(-1),
             Command::Quit => Effect::Quit,
             Command::ToggleFullscreen => {
-                if let Some(opened) = self.opened_at {
-                    if now.saturating_duration_since(opened) < OPEN_FULLSCREEN_GUARD {
-                        return Effect::None;
-                    }
-                }
                 self.fullscreen = !self.fullscreen;
                 if !self.fullscreen {
                     self.keyboard_until = Some(now + Duration::from_millis(1000));

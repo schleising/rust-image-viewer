@@ -121,9 +121,11 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 state.write().pointer_up((point.x, point.y));
             },
             ondoubleclick: move |_| {
-                let effect = state
-                    .write()
-                    .dispatch(Command::ToggleFullscreen, std::time::Instant::now());
+                let now = std::time::Instant::now();
+                if state.read().open_fullscreen_guard(now) {
+                    return;
+                }
+                let effect = state.write().dispatch(Command::ToggleFullscreen, now);
                 effects::run(state, click_window.clone(), effect);
             },
             img {

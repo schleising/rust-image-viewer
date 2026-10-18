@@ -51,6 +51,7 @@ pub enum ShortcutKey {
     Up,
     Down,
     Space,
+    Enter,
     Char(char),
 }
 

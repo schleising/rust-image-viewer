@@ -292,6 +292,7 @@ fn shortcut_accel(shortcut: Shortcut) -> Option<Accelerator> {
         ShortcutKey::Up => Code::ArrowUp,
         ShortcutKey::Down => Code::ArrowDown,
         ShortcutKey::Space => Code::Space,
+        ShortcutKey::Enter => Code::Enter,
         ShortcutKey::Char(ch) => char_code(ch)?,
     };
     Some(Accelerator::new(mods, code))
