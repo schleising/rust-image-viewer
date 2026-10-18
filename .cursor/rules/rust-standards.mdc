@@ -1,0 +1,50 @@
+---
+description: Rust error handling, Clippy, and versioning for Image Viewer
+alwaysApply: true
+---
+
+# Rust standards
+
+## Errors
+
+`unwrap()` and `expect()` are banned, including in tests, examples, and build scripts. They panic and stop the process.
+
+`unwrap_or()`, `unwrap_or_else()`, and `unwrap_or_default()` are fine. So is `?` inside a function that returns `Result`.
+
+Once the window is up, an error must not end the process. Log it, show it in the window, and keep running. Core functions may return `Result`. The shell handles that `Err` and stays in the event loop.
+
+```rust
+let scale = requested.unwrap_or(1.0);
+
+let file = match File::open(&path) {
+    Ok(file) => file,
+    Err(error) => {
+        tracing::error!(%error, ?path, "could not open file");
+        show_stage_message("Could not open this file");
+        return;
+    }
+};
+```
+
+Tests return `Result<(), E>` and use `?`. Assertions stay as `assert!` / `assert_eq!`.
+
+When the crate exists, deny both lints:
+
+```toml
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+```
+
+## Clippy
+
+`cargo clippy --all-targets --all-features -- -D warnings` passes before work is called done.
+
+## Version
+
+The package stays below `1.0.0` until Steve explicitly says that release is OK.
+
+Follow semantic versioning on the `0.x` line. The design starts at `0.1.0`.
+
+- Patch (`0.1.1`) for fixes.
+- Minor (`0.2.0`) for new behaviour and for breaking changes while the major version remains 0.
