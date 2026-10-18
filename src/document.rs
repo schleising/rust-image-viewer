@@ -429,6 +429,21 @@ pub fn frame_at_time(frames: &[AnimFrame], time: f64) -> usize {
     frames.len() - 1
 }
 
+pub fn frame_ending_at(frames: &[AnimFrame], time: f64) -> usize {
+    if frames.is_empty() {
+        return 0;
+    }
+    let time = if time.is_finite() { time.max(0.0) } else { 0.0 };
+    let mut elapsed = 0.0;
+    for (index, frame) in frames.iter().enumerate() {
+        elapsed += frame.delay.as_secs_f64();
+        if time <= elapsed || index + 1 == frames.len() {
+            return index;
+        }
+    }
+    frames.len() - 1
+}
+
 pub fn advance_frame(
     index: usize,
     frame_count: usize,

@@ -134,6 +134,7 @@ pub struct AppState {
     pub place_visible: bool,
     place_until: Option<Instant>,
     pub drag: Option<Drag>,
+    pub loop_drag: Option<LoopEnd>,
     pub last_command: Option<String>,
     pub last_command_at: Option<Instant>,
     pub thumb_epoch: u64,
@@ -155,6 +156,21 @@ pub struct Drag {
     pub control: bool,
     pub origin: (f64, f64),
     pub fitted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopEnd {
+    In,
+    Out,
+}
+
+impl LoopEnd {
+    fn opposite(self) -> Self {
+        match self {
+            Self::In => Self::Out,
+            Self::Out => Self::In,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -256,6 +272,7 @@ impl AppState {
             place_visible: false,
             place_until: None,
             drag: None,
+            loop_drag: None,
             last_command: None,
             last_command_at: None,
             thumb_epoch: 0,
@@ -922,6 +939,7 @@ impl AppState {
         self.opened_at = Some(Instant::now());
         self.message = None;
         self.scrub_visible = false;
+        self.loop_drag = None;
         self.reveal_place(Instant::now());
         self.bump_anim();
     }
@@ -942,6 +960,7 @@ impl AppState {
         self.clear_video_slots();
         self.place_visible = false;
         self.place_until = None;
+        self.loop_drag = None;
         self.bump_anim();
     }
 
@@ -1236,9 +1255,102 @@ impl AppState {
     }
 
     pub fn hide_scrub(&mut self, token: u64) {
+        if self.loop_drag.is_some() {
+            return;
+        }
         if self.scrub_token == token {
             self.scrub_visible = false;
         }
+    }
+
+    pub fn begin_loop_drag(&mut self, end: LoopEnd) {
+        self.loop_drag = Some(end);
+        self.poke_scrub();
+    }
+
+    pub fn drag_loop_marker(&mut self, fraction: f32) -> Effect {
+        let Some(end) = self.loop_drag else {
+            return Effect::None;
+        };
+        let fraction = fraction.clamp(0.0, 1.0);
+        if self.video().is_some() {
+            return self.drag_video_loop(end, fraction);
+        }
+        self.drag_anim_loop(end, fraction);
+        Effect::None
+    }
+
+    fn drag_video_loop(&mut self, end: LoopEnd, fraction: f32) -> Effect {
+        let Some(crossed) = self.place_video_loop(end, fraction) else {
+            return Effect::None;
+        };
+        if crossed {
+            self.loop_drag = Some(end.opposite());
+        }
+        Effect::SyncVideo
+    }
+
+    fn place_video_loop(&mut self, end: LoopEnd, fraction: f32) -> Option<bool> {
+        let video = match &mut self.document {
+            Some(Document::Video(video)) => video,
+            _ => return None,
+        };
+        let time = video.duration.max(0.0) * f64::from(fraction);
+        match end {
+            LoopEnd::In => video.loop_in = Some(time),
+            LoopEnd::Out => video.loop_out = Some(time),
+        }
+        let mut crossed = false;
+        if let (Some(start), Some(finish)) = (video.loop_in, video.loop_out) {
+            if finish < start {
+                video.loop_in = Some(finish);
+                video.loop_out = Some(start);
+                crossed = true;
+            }
+        }
+        video.contain_in_loop();
+        Some(crossed)
+    }
+
+    fn drag_anim_loop(&mut self, end: LoopEnd, fraction: f32) {
+        let index = self
+            .image()
+            .filter(|image| image.is_animation())
+            .map(|image| {
+                let time = document::animation_duration(&image.frames) * f64::from(fraction);
+                match end {
+                    LoopEnd::In => document::frame_at_time(&image.frames, time),
+                    LoopEnd::Out => document::frame_ending_at(&image.frames, time),
+                }
+            });
+        let Some(index) = index else {
+            return;
+        };
+        match end {
+            LoopEnd::In => self.anim_loop_in = Some(index),
+            LoopEnd::Out => self.anim_loop_out = Some(index),
+        }
+        if let (Some(start), Some(finish)) = (self.anim_loop_in, self.anim_loop_out) {
+            if finish < start {
+                self.anim_loop_in = Some(finish);
+                self.anim_loop_out = Some(start);
+                self.loop_drag = Some(end.opposite());
+            }
+        }
+        let outside = self
+            .anim_loop_range()
+            .is_some_and(|(start, finish)| self.frame_index < start || self.frame_index > finish);
+        if outside {
+            if let Some((start, _)) = self.anim_loop_range() {
+                self.animation_done = false;
+                self.frame_index = start;
+                self.bump_anim();
+            }
+        }
+    }
+
+    pub fn end_loop_drag(&mut self) {
+        self.loop_drag = None;
     }
 
     pub fn reveal_place(&mut self, now: Instant) {
@@ -1829,6 +1941,56 @@ mod tests {
         );
         assert!(matches!(sought, Effect::None));
         assert_eq!(state.frame_index, 0);
+    }
+
+    #[test]
+    fn dragging_a_loop_marker_follows_the_pointer() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.document = Some(video_doc("/pictures/a.mp4", 1));
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.loop_in = Some(2.0);
+            video.loop_out = Some(6.0);
+        }
+        state.begin_loop_drag(LoopEnd::In);
+        let moved = state.drag_loop_marker(0.5);
+        assert!(matches!(moved, Effect::SyncVideo));
+        let inn = state
+            .video()
+            .and_then(|video| video.loop_in)
+            .unwrap_or(-1.0);
+        assert!((inn - 5.0).abs() < 1e-6);
+        let _ = state.drag_loop_marker(0.8);
+        assert_eq!(state.loop_drag, Some(LoopEnd::Out));
+        let inn = state
+            .video()
+            .and_then(|video| video.loop_in)
+            .unwrap_or(-1.0);
+        let out = state
+            .video()
+            .and_then(|video| video.loop_out)
+            .unwrap_or(-1.0);
+        assert!((inn - 6.0).abs() < 1e-6);
+        assert!((out - 8.0).abs() < 1e-6);
+        let _ = state.drag_loop_marker(0.9);
+        let out = state
+            .video()
+            .and_then(|video| video.loop_out)
+            .unwrap_or(-1.0);
+        assert!((out - 9.0).abs() < 1e-6);
+        state.end_loop_drag();
+        assert!(state.loop_drag.is_none());
+
+        let mut animation = AppState::new();
+        animation.mode = Mode::Viewer;
+        animation.document = Some(animation_doc());
+        animation.anim_loop_in = Some(1);
+        animation.anim_loop_out = Some(2);
+        animation.begin_loop_drag(LoopEnd::Out);
+        animation.drag_loop_marker(0.25);
+        assert_eq!(animation.anim_loop_in, Some(0));
+        assert_eq!(animation.anim_loop_out, Some(1));
+        assert_eq!(animation.loop_drag, Some(LoopEnd::In));
     }
 
     #[test]

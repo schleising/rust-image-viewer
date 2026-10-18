@@ -1,6 +1,6 @@
 use crate::command::Command;
 use crate::effects;
-use crate::state::{AppState, FrameLayer};
+use crate::state::{AppState, FrameLayer, LoopEnd};
 use crate::viewport::{self, PixelRect};
 use dioxus::desktop::DesktopContext;
 use dioxus::html::geometry::WheelDelta;
@@ -71,6 +71,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         )
     };
     let pointer_window = window.clone();
+    let marker_window = window.clone();
     let wheel_window = window.clone();
     let click_window = window.clone();
     let front_url = front.url.clone();
@@ -114,6 +115,11 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     return;
                 }
                 let point = event.data().element_coordinates();
+                let end = loop_marker_at(&state.read(), point.x, point.y);
+                if let Some(end) = end {
+                    state.write().begin_loop_drag(end);
+                    return;
+                }
                 if scrub_hit(&state.read(), point.y) {
                     let fraction = scrub_fraction(&state.read(), point.x);
                     let effect = state
@@ -130,6 +136,18 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     return;
                 }
                 let point = event.data().element_coordinates();
+                let dragging = state.read().loop_drag.is_some();
+                if dragging {
+                    let fraction = scrub_fraction(&state.read(), point.x);
+                    let effect = state.write().drag_loop_marker(fraction);
+                    effects::run(state, marker_window.clone(), effect);
+                    let token = state.write().poke_scrub();
+                    spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        state.write().hide_scrub(token);
+                    });
+                    return;
+                }
                 state.write().pointer_move((point.x, point.y));
                 state.write().reveal_place(std::time::Instant::now());
                 if state.read().playback_clock().is_some() {
@@ -142,7 +160,16 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             },
             onpointerup: move |event| {
                 let point = event.data().element_coordinates();
+                let dragged = state.read().loop_drag.is_some();
+                state.write().end_loop_drag();
                 state.write().pointer_up((point.x, point.y));
+                if dragged {
+                    let token = state.write().poke_scrub();
+                    spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        state.write().hide_scrub(token);
+                    });
+                }
             },
             ondoubleclick: move |_| {
                 if state.read().long_operation() {
@@ -424,6 +451,40 @@ fn scrub_fraction(state: &AppState, x: f64) -> f32 {
     ((x - 100.0) / width).clamp(0.0, 1.0) as f32
 }
 
+const MARKER_GRAB: f64 = 14.0;
+
+fn loop_marker_at(state: &AppState, x: f64, y: f64) -> Option<LoopEnd> {
+    if !state.scrub_visible || !scrub_hit(state, y) {
+        return None;
+    }
+    let clock = state.playback_clock()?;
+    let mut nearest: Option<(LoopEnd, f64)> = None;
+    for (end, time) in [(LoopEnd::In, clock.loop_in), (LoopEnd::Out, clock.loop_out)] {
+        let Some(time) = time else {
+            continue;
+        };
+        let Some(at) = marker_x(state, time) else {
+            continue;
+        };
+        let distance = (x - at).abs();
+        if distance > MARKER_GRAB {
+            continue;
+        }
+        let closer = nearest.is_none_or(|(_, best)| distance < best);
+        if closer {
+            nearest = Some((end, distance));
+        }
+    }
+    nearest.map(|(end, _)| end)
+}
+
+fn marker_x(state: &AppState, time: f64) -> Option<f64> {
+    let clock = state.playback_clock()?;
+    let fraction = timeline_percent(time, clock.duration)? / 100.0;
+    let width = (state.view_size.0 - 200.0).max(1.0);
+    Some(100.0 + fraction * width)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{scrub_style, timeline_percent};
@@ -476,5 +537,37 @@ mod tests {
         }
         state.scrub_visible = false;
         assert!(scrub_style(&state).is_none());
+    }
+
+    #[test]
+    fn a_pointer_on_a_bracket_grabs_that_end() {
+        use super::loop_marker_at;
+        use crate::state::LoopEnd;
+
+        let mut state = AppState::new();
+        state.scrub_visible = true;
+        state.document = Some(Document::Video(VideoDocument {
+            path: PathBuf::from("/pictures/a.mp4"),
+            token: 1,
+            duration: 10.0,
+            position: 1.0,
+            paused: false,
+            volume: 1.0,
+            muted: false,
+            speed: 1.0,
+            loop_in: Some(2.0),
+            loop_out: Some(6.0),
+            size: (320, 180),
+        }));
+        let width = (state.view_size.0 - 200.0).max(1.0);
+        let inn = 100.0 + 0.2 * width;
+        let out = 100.0 + 0.6 * width;
+        let y = state.view_size.1 - 100.0;
+        assert_eq!(loop_marker_at(&state, inn, y), Some(LoopEnd::In));
+        assert_eq!(loop_marker_at(&state, out + 10.0, y), Some(LoopEnd::Out));
+        assert_eq!(loop_marker_at(&state, (inn + out) / 2.0, y), None);
+        assert_eq!(loop_marker_at(&state, inn, y - 40.0), None);
+        state.scrub_visible = false;
+        assert_eq!(loop_marker_at(&state, inn, y), None);
     }
 }
