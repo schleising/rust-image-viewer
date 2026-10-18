@@ -30,9 +30,9 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: light-dark(#ececec, #101010); touch-action: none; }
 .frame, video { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; background: transparent; }
 .selection { position: absolute; z-index: 4; box-sizing: border-box; background: rgba(30, 144, 255, 0.5); border: 1px solid rgb(30, 144, 255); pointer-events: none; }
-.scrubber { position: absolute; z-index: 6; left: 100px; right: 100px; bottom: 100px; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.38); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.35); pointer-events: none; overflow: visible; }
+.scrubber { position: absolute; z-index: 6; left: 100px; right: 100px; bottom: 100px; height: 4px; border-radius: 999px; background: rgba(0, 0, 0, 0.4); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none; overflow: visible; }
 .scrubber-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: rgb(30, 144, 255); }
-.scrubber .mark { position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: white; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.45); }
+.scrubber .mark { position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: rgba(16, 16, 16, 0.55); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.75), 0 1px 2px rgba(0, 0, 0, 0.4); }
 .scrubber .loop-in, .scrubber .loop-out { position: absolute; top: -8px; width: 8px; height: 12px; box-sizing: border-box; border: 2px solid rgb(255, 204, 0); filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.65)); pointer-events: none; }
 .scrubber .loop-in { border-right: 0; margin-left: -2px; }
 .scrubber .loop-out { border-left: 0; margin-left: -6px; }
