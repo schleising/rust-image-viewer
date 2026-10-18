@@ -1,4 +1,5 @@
 mod thumbnail;
+mod video_frame;
 
 use crate::catalog::{middle_elide, EntryKind};
 use crate::effects;
@@ -28,6 +29,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     let kind = entry.kind;
                     let src = thumb_src(generation, index, px, kind);
                     let message = thumb_message(generation, index, px, kind);
+                    let badge = video_badge(generation, index, px, kind);
                     let class = if selected { "cell selected" } else { "cell" };
                     let window = window.clone();
                     rsx! {
@@ -43,8 +45,11 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                                     div { class: "thumb-error", "{message}" }
                                 } else if let Some(src) = src {
                                     img {
-                                        class: if matches!(kind, EntryKind::Image) { "thumb" } else { "thumb icon" },
+                                        class: if badge || matches!(kind, EntryKind::Image) { "thumb" } else { "thumb icon" },
                                         src: "{src}",
+                                    }
+                                    if badge {
+                                        div { class: "video-badge" }
                                     }
                                 } else {
                                     img { class: "thumb loading", src: "app://icon/loading.png" }
@@ -62,12 +67,24 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
 fn thumb_src(generation: u64, index: usize, px: u32, kind: EntryKind) -> Option<String> {
     match kind {
         EntryKind::Parent | EntryKind::Directory => Some("app://icon/folder.png".into()),
-        EntryKind::Video => Some("app://icon/video.png".into()),
+        EntryKind::Video => match protocol::thumb_status(generation, index, px) {
+            ThumbStatus::Ready => Some(format!("app://thumb/{generation}/{index}?s={px}")),
+            ThumbStatus::Failed(_) => Some("app://icon/video.png".into()),
+            ThumbStatus::Missing => None,
+        },
         EntryKind::Image => match protocol::thumb_status(generation, index, px) {
             ThumbStatus::Ready => Some(format!("app://thumb/{generation}/{index}?s={px}")),
             _ => None,
         },
     }
+}
+
+fn video_badge(generation: u64, index: usize, px: u32, kind: EntryKind) -> bool {
+    kind == EntryKind::Video
+        && matches!(
+            protocol::thumb_status(generation, index, px),
+            ThumbStatus::Ready
+        )
 }
 
 fn thumb_message(generation: u64, index: usize, px: u32, kind: EntryKind) -> Option<String> {

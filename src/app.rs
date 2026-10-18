@@ -23,6 +23,8 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .thumb-box { width: 100%; aspect-ratio: 1; position: relative; overflow: hidden; }
 .thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .thumb.loading { width: 40%; height: 40%; margin: auto; opacity: 0.2; }
+.video-badge { position: absolute; z-index: 1; left: 6px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%; background: rgba(20, 20, 20, 0.72); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); pointer-events: none; }
+.video-badge::after { content: ""; position: absolute; left: 7px; top: 5px; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent white; }
 .thumb-error { font-size: 11px; padding: 4px; }
 .label { white-space: nowrap; overflow: hidden; }
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: light-dark(#ececec, #101010); touch-action: none; }

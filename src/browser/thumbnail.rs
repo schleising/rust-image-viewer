@@ -15,6 +15,7 @@ struct Job {
     index: usize,
     path: PathBuf,
     px: u32,
+    video: bool,
 }
 
 static CURRENT: AtomicU64 = AtomicU64::new(0);
@@ -34,7 +35,8 @@ pub fn ensure(folder: &FolderView, generation: u64, px: u32) {
     };
     queued.retain(|item| item.0 == generation);
     for (index, entry) in folder.entries.iter().enumerate() {
-        if entry.kind != EntryKind::Image {
+        let video = entry.kind == EntryKind::Video;
+        if entry.kind != EntryKind::Image && !video {
             continue;
         }
         if !matches!(
@@ -51,6 +53,7 @@ pub fn ensure(folder: &FolderView, generation: u64, px: u32) {
             index,
             path: entry.path.clone(),
             px,
+            video,
         });
     }
 }
@@ -84,13 +87,28 @@ fn worker(rx: std::sync::Arc<std::sync::Mutex<Receiver<Job>>>) {
         if job.generation != CURRENT.load(Ordering::SeqCst) {
             continue;
         }
-        let result = decode_thumb(&job.path, job.px);
+        let result = if job.video {
+            decode_video_thumb(&job.path, job.px)
+        } else {
+            decode_thumb(&job.path, job.px)
+        };
+        if let Err(error) = &result {
+            if job.video {
+                tracing::warn!(%error, path = %job.path.display(), "could not read a video thumbnail");
+            }
+        }
         if job.generation != CURRENT.load(Ordering::SeqCst) {
             continue;
         }
         protocol::store_thumb(job.generation, job.index, job.px, result);
         wake::post(wake::Note::Thumbs);
     }
+}
+
+fn decode_video_thumb(path: &std::path::Path, px: u32) -> Result<Vec<u8>, String> {
+    let frame = super::video_frame::frame(path, px)?;
+    let contained = contain(&frame, px)?;
+    encode_png(&contained)
 }
 
 fn decode_thumb(path: &std::path::Path, px: u32) -> Result<Vec<u8>, String> {
