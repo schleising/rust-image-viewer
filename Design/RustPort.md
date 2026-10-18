@@ -680,7 +680,7 @@ struct Viewport {
 
 `fitted` starts true. `scale` is relative to the fitted size, so fitted zoom is 1. Wheel handling adjusts `translation` so the image point under the pointer stays put. The selection overlay is a `div` mapped through that transform.
 
-The stage background follows the system light and dark appearance so transparent pixels are visible.
+The stage background follows the system light and dark appearance so transparent pixels are visible. Light appearance is a neutral gray (`#aeaeac`) rather than white. The thumbnail window is a step lighter (`#c4c4c2`). Dark appearance stays `#101010` for the stage and `#161616` for the thumbnails.
 
 Both dialogs are Dioxus overlays, not extra windows. A newer adjust preview cancels an older `spawn_blocking` job.
 

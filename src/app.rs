@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 const CSS: &str = r#"
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #111; -webkit-user-select: none; user-select: none; }
-#root { height: 100vh; overflow: hidden; overscroll-behavior: none; outline: none; color-scheme: light dark; background: light-dark(#f3f3f3, #161616); color: light-dark(#111, #eee); font: 13px -apple-system, BlinkMacSystemFont, sans-serif; position: relative; -webkit-user-select: none; user-select: none; }
+#root { height: 100vh; overflow: hidden; overscroll-behavior: none; outline: none; color-scheme: light dark; background: light-dark(#c4c4c2, #161616); color: light-dark(#111, #eee); font: 13px -apple-system, BlinkMacSystemFont, sans-serif; position: relative; -webkit-user-select: none; user-select: none; }
 img, button, .label, .stage { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
 .dialog, .dialog * { -webkit-user-select: text; user-select: text; }
 .browser { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); align-content: start; overflow: auto; height: 100%; }
@@ -27,7 +27,7 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .video-badge::after { content: ""; position: absolute; left: 7px; top: 5px; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent white; }
 .thumb-error { font-size: 11px; padding: 4px; }
 .label { white-space: nowrap; overflow: hidden; }
-.stage { position: relative; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: light-dark(#ececec, #101010); touch-action: none; }
+.stage { position: relative; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: light-dark(#aeaeac, #101010); touch-action: none; }
 .frame, video { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; background: transparent; }
 .selection { position: absolute; z-index: 4; box-sizing: border-box; background: rgba(30, 144, 255, 0.5); border: 1px solid rgb(30, 144, 255); pointer-events: none; }
 .scrubber { position: absolute; z-index: 6; left: 100px; right: 100px; bottom: 100px; height: 4px; border-radius: 999px; background: rgba(0, 0, 0, 0.4); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none; overflow: visible; opacity: 0; transition: opacity 240ms ease; }
