@@ -153,12 +153,12 @@ pub fn app() -> Element {
                     match action {
                         ScrollAction::Restore(top) => {
                             dioxus::document::eval(&format!(
-                                "const grid = document.getElementById('browser'); if (grid) grid.scrollTop = {top};"
+                                "const grid = document.getElementById('browser'); if (grid) grid.scrollTop = {top}; requestAnimationFrame(() => {{ const cell = document.querySelector('.cell.selected'); if (cell) cell.scrollIntoView({{block:'nearest', inline:'nearest'}}); }});"
                             ));
                         }
                         ScrollAction::Reveal => {
                             dioxus::document::eval(
-                                "const cell = document.querySelector('.cell.selected'); if (cell) cell.scrollIntoView({block:'nearest', inline:'nearest'});",
+                                "requestAnimationFrame(() => { const cell = document.querySelector('.cell.selected'); if (cell) cell.scrollIntoView({block:'nearest', inline:'nearest'}); });",
                             );
                         }
                     }

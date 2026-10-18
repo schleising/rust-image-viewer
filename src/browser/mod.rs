@@ -19,6 +19,11 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         div {
             id: "browser",
             class: "browser",
+            onmounted: move |_| {
+                dioxus::document::eval(
+                    "requestAnimationFrame(() => { const cell = document.querySelector('.cell.selected'); if (cell) cell.scrollIntoView({block:'nearest', inline:'nearest'}); });",
+                );
+            },
             onscroll: move |event| {
                 state.write().set_scroll(event.data().scroll_top());
             },

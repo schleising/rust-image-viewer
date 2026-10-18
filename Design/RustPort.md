@@ -50,8 +50,8 @@ A path is opened whether or not it contains `.vscode`. Do not special-case edito
 - A GIF or WebP with more than one frame gets a small play badge on that thumbnail. A single-frame GIF or WebP does not.
 - Videos show `loading.png` until a frame from about 15% of the way through the movie is ready, then that frame with the same play badge. If the frame cannot be read, the cell shows `video.png` and no extra badge.
 - The play badge is a 20 px dark circle in the bottom-left of the thumbnail, with a white triangle.
-- One highlight. It is a light wash of the same blue, rounded, so it stays quiet next to the blue folder icon. Arrow keys move it by one cell or by one row of eight, clamped to the list, and scroll it into view. Return or a click opens it. The grid stays up until that file has loaded. Opening a file from Finder, `open`, or a path does not wait on the grid: the viewer is shown at once.
-- Opening a directory remembers the highlight index and scroll offset for the folder being left, then lists the new folder. Returning restores both after the grid has been committed. If the index is now out of range, clamp it.
+- One highlight. It is a light wash of the same blue, rounded, so it stays quiet next to the blue folder icon. Arrow keys move it by one cell or by one row of eight, clamped to the list, and scroll it into view. Opening the thumbnail grid does the same, so the highlighted file or folder is in view. Return or a click opens it. The grid stays up until that file has loaded. Opening a file from Finder, `open`, or a path does not wait on the grid: the viewer is shown at once.
+- Opening a directory remembers the highlight index and scroll offset for the folder being left, then lists the new folder. Returning restores both after the grid has been committed, then scrolls the highlighted cell into view if that offset left it outside. If the index is now out of range, clamp it.
 - The window title is the current directory's stem.
 - Leaving a folder discards in-flight thumbnail results. Decode work must not touch UI state; the UI thread applies a finished bitmap.
 
@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -867,7 +867,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.0.2` (or older `…@1.0.2`).
+# cargo pkgid is `path+file:///…/image-viewer#1.0.3` (or older `…@1.0.3`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"

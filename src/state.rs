@@ -967,6 +967,7 @@ impl AppState {
         self.place_until = None;
         self.loop_drag = None;
         self.scrub_drag = false;
+        self.scroll_action = Some(ScrollAction::Reveal);
         self.bump_anim();
     }
 
@@ -2225,6 +2226,20 @@ mod tests {
         assert_eq!(state.folder.scroll_top, 48.0);
         assert_eq!(state.scroll_action, Some(ScrollAction::Restore(48.0)));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn returning_to_the_grid_reveals_the_highlight() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.folder = folder();
+        state.folder.highlighted = 1;
+        state.document = Some(image_doc("/pictures/b.png"));
+        let effect = state.dispatch(Command::ReturnToBrowser, Instant::now());
+        assert!(matches!(effect, Effect::FocusPage));
+        assert_eq!(state.mode, Mode::Browser);
+        assert_eq!(state.folder.highlighted, 1);
+        assert_eq!(state.scroll_action, Some(ScrollAction::Reveal));
     }
 
     #[test]
