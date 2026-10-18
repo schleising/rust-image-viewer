@@ -57,6 +57,9 @@ pub struct VideoDocument {
     pub paused: bool,
     pub volume: f32,
     pub muted: bool,
+    pub speed: f32,
+    pub loop_in: Option<f64>,
+    pub loop_out: Option<f64>,
     pub size: (u32, u32),
 }
 
@@ -129,6 +132,26 @@ impl ImageDocument {
     }
 }
 
+impl VideoDocument {
+    pub fn loop_span(&self) -> Option<(f64, f64)> {
+        let start = self.loop_in?;
+        let end = self.loop_out?;
+        if !start.is_finite() || !end.is_finite() || end - start < 0.05 {
+            return None;
+        }
+        Some((start, end))
+    }
+
+    pub fn contain_in_loop(&mut self) {
+        let Some((start, end)) = self.loop_span() else {
+            return;
+        };
+        if self.position >= end {
+            self.position = start;
+        }
+    }
+}
+
 pub fn load(path: &Path) -> Result<Document, DocError> {
     let name = path
         .file_name()
@@ -144,6 +167,9 @@ pub fn load(path: &Path) -> Result<Document, DocError> {
             paused: false,
             volume: 1.0,
             muted: false,
+            speed: 1.0,
+            loop_in: None,
+            loop_out: None,
             size: (0, 0),
         }));
     }

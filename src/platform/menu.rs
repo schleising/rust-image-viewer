@@ -209,6 +209,62 @@ pub fn native_menu() -> Menu {
         Command::ToggleMute,
         false,
     );
+    let _ = video.append(&PredefinedMenuItem::separator());
+    push_item(
+        &video,
+        &mut items,
+        "speed-half",
+        "Speed 0.5×",
+        None,
+        Command::SetSpeed { rate: 0.5 },
+        false,
+    );
+    push_item(
+        &video,
+        &mut items,
+        "speed-normal",
+        "Normal Speed",
+        None,
+        Command::SetSpeed { rate: 1.0 },
+        false,
+    );
+    push_item(
+        &video,
+        &mut items,
+        "speed-double",
+        "Speed 2×",
+        None,
+        Command::SetSpeed { rate: 2.0 },
+        false,
+    );
+    let _ = video.append(&PredefinedMenuItem::separator());
+    push_item(
+        &video,
+        &mut items,
+        "loop-in",
+        "Set Loop In",
+        accel(Modifiers::empty(), Code::KeyI),
+        Command::SetLoopIn,
+        false,
+    );
+    push_item(
+        &video,
+        &mut items,
+        "loop-out",
+        "Set Loop Out",
+        accel(Modifiers::empty(), Code::KeyO),
+        Command::SetLoopOut,
+        false,
+    );
+    push_item(
+        &video,
+        &mut items,
+        "loop-clear",
+        "Clear Loop",
+        None,
+        Command::ClearLoop,
+        false,
+    );
 
     let _ = menu.append(&app);
     let _ = menu.append(&file);

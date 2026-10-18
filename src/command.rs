@@ -38,6 +38,12 @@ pub enum Command {
     Seek {
         fraction: f32,
     },
+    SetSpeed {
+        rate: f32,
+    },
+    SetLoopIn,
+    SetLoopOut,
+    ClearLoop,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -88,9 +94,14 @@ impl Command {
             Self::CropToSelection => flags.image && flags.selection && !flags.busy,
             Self::ShowInfo => flags.image,
             Self::PlayPause => flags.video || flags.animated,
-            Self::Skip { .. } | Self::NudgeVolume { .. } | Self::ToggleMute | Self::Seek { .. } => {
-                flags.video
-            }
+            Self::Skip { .. }
+            | Self::NudgeVolume { .. }
+            | Self::ToggleMute
+            | Self::Seek { .. }
+            | Self::SetSpeed { .. }
+            | Self::SetLoopIn
+            | Self::SetLoopOut
+            | Self::ClearLoop => flags.video,
         }
     }
 
@@ -108,6 +119,7 @@ impl Command {
             Self::Skip { delta_ms } => format!("skip:{delta_ms}"),
             Self::NudgeVolume { delta } => format!("volume:{delta}"),
             Self::Seek { fraction } => format!("seek:{fraction}"),
+            Self::SetSpeed { rate } => format!("speed:{rate}"),
             other => format!("{other:?}"),
         }
     }
@@ -122,6 +134,8 @@ pub fn commands_for_key(mods: Mods, key: ShortcutKey) -> Vec<Command> {
             ShortcutKey::Up => commands.push(Command::ReturnToBrowser),
             ShortcutKey::Space => commands.push(Command::PlayPause),
             ShortcutKey::Enter => commands.push(Command::ToggleFullscreen),
+            ShortcutKey::Char('i') => commands.push(Command::SetLoopIn),
+            ShortcutKey::Char('o') => commands.push(Command::SetLoopOut),
             _ => {}
         }
     }

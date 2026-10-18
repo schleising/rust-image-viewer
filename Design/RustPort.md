@@ -119,7 +119,7 @@ Image Information lists Format, Format Description, Width, Height, and Mode. Des
 
 Adjust Image is a dialog with Colour, Contrast, and Brightness sliders. Each runs from 0 to 20 and is divided by 10, so 10 is factor 1.0. Movement previews without touching the undo stack. OK commits the three adjustments as one undo step. Cancel restores the pre-dialog image. Escape cancels.
 
-Videos loop. Space pauses and resumes. Shift-Left and Shift-Right seek by 5 seconds. Shift-Up and Shift-Down change volume by 0.1, clamped to 0.0–1.0, and unmute. Shift-M toggles mute. Volume starts at 1.0. A scrubber is inset 100 px from the left, right, and bottom of the view, 4 px tall. It is drawn over the video. The track is a rounded capsule, white at about 38% alpha, with a fine dark edge. The played portion is solid Dodger Blue (`rgb(30, 144, 255)`). The position mark is a 12 px white circle centred on the current time. Pointer movement and skip commands show it and hide it 500 ms after the pointer stops. A click seeks to that fraction of the duration. Returning to the browser or opening another file stops playback.
+Videos loop. Space pauses and resumes. The Video menu sets playback to half speed or double speed, and Normal Speed returns to 1×. The pitch stays at the original pitch. I marks the current time as the start of a loop, and O marks the end. When the end is after the start, playback repeats that span instead of the whole file. Clear Loop returns to the whole movie. Points marked in reverse order are swapped. Shift-Left and Shift-Right seek by 5 seconds. Shift-Up and Shift-Down change volume by 0.1, clamped to 0.0–1.0, and unmute. Shift-M toggles mute. Volume starts at 1.0. A scrubber is inset 100 px from the left, right, and bottom of the view, 4 px tall. It is drawn over the video. The track is a rounded capsule, white at about 38% alpha, with a fine dark edge. The played portion is solid Dodger Blue (`rgb(30, 144, 255)`). The position mark is a 12 px white circle centred on the current time. An in point is a yellow bracket opening into the span, and an out point is the matching bracket. A yellow line joins them along the top of the track. Setting or clearing a point shows the scrubber. Pointer movement and skip commands show it and hide it 500 ms after the pointer stops. A click seeks to that fraction of the duration. Returning to the browser or opening another file stops playback.
 
 The video on screen stays visible when it is paused, skipped, or seeked, and while the next video is still loading. The next video replaces it when that element has loaded its first frame. Still images stay hidden for as long as a video is showing, so a pause does not reveal the last picture.
 
@@ -150,6 +150,9 @@ These are physical Mac keys. Command is the modifier Dioxus calls Meta. Option i
 | Super Resolution | Control-S | Image |
 | Undo | Command-Z | Image undo stack is non-empty |
 | Play / Pause | Space | Video, or an animated image |
+| Half / double speed | Video menu | Video |
+| Loop in / out | I / O | Video |
+| Clear loop | Video menu | Video |
 | Skip | Shift-Right / Shift-Left | Video |
 | Volume | Shift-Up / Shift-Down | Video |
 | Mute | Shift-M | Video |
@@ -685,13 +688,13 @@ Save failure is logged and shown on the stage. Success points `clean` at the cur
 
 ## 9. Video
 
-`VideoDocument` stores the path, duration, position, paused flag, volume, mute flag, and a token. The shell renders two `<video loop>` elements with no native controls. The one on screen has the id `player`. The hidden one keeps the previous or the next movie. Bytes come from `app://video/{token}`. A hidden video is paused and muted. Time updates from a video that is no longer `player` are ignored, so a movie that has just been replaced cannot overwrite the position.
+`VideoDocument` stores the path, duration, position, paused flag, volume, mute flag, playback speed, optional loop in and out points, and a token. The shell renders two `<video loop>` elements with no native controls. The one on screen has the id `player`. The hidden one keeps the previous or the next movie. Bytes come from `app://video/{token}`. A hidden video is paused and muted. Time updates from a video that is no longer `player` are ignored, so a movie that has just been replaced cannot overwrite the position. Playback speed sets `playbackRate` and keeps `preservesPitch` on. A loop span turns off the element's own loop and returns the playhead to the in point when it reaches the out point.
 
 The movie on screen stays up until the next one reports `loadeddata`. Pause, seek, mute, and volume do not hide it, and they do not uncover the still images underneath.
 
 That route honours `Range`. `Range: bytes=start-end` returns 206 with `Content-Range` and `Accept-Ranges: bytes`. A request without a range returns 200 and the whole file. Seeking does not work without this.
 
-`play`, `pause`, `currentTime`, `volume`, and `muted` are set through `dioxus::document::eval`, because they are DOM properties. `timeupdate` and `loadedmetadata` write position and duration back into the document.
+`play`, `pause`, `currentTime`, `volume`, `muted`, `playbackRate`, and `preservesPitch` are set through `dioxus::document::eval`, because they are DOM properties. `timeupdate` and `loadedmetadata` write position and duration back into the document. A frame callback wraps a loop span, because `timeupdate` is too coarse.
 
 The scrubber is Dioxus markup using the geometry in section 1. It sits above the video. A click sends `Command::Seek { fraction }`. The hit target is the inset bar, with a few pixels of slack vertically, not the 4 px of paint alone.
 
@@ -718,7 +721,7 @@ A native muda menu from `dioxus::desktop::muda`, built the same way as a normal 
 - File: Save.
 - Show: Return to Browser, Next, Previous, a separator, Adjust Image, a separator, Zoom to Rect, Reset Zoom, a separator, Image Information.
 - Image: registry items in `order`, separators between `MenuGroup`s, then Undo.
-- Video: Play / Pause, Skip Forwards, Skip Backwards, Volume Up, Volume Down, Toggle Mute.
+- Video: Play / Pause, Skip Forwards, Skip Backwards, Volume Up, Volume Down, Toggle Mute, Speed 0.5×, Normal Speed, Speed 2×, Set Loop In, Set Loop Out, Clear Loop.
 
 Enabled flags follow `Command::available` and are updated when mode, selection, zoom, or the dirty flag changes.
 

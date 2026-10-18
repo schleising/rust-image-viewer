@@ -178,10 +178,19 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             if let Some(style) = selection {
                 div { class: "selection", style: "{style}" }
             }
-            if let Some((fill, mark)) = scrub {
+            if let Some(paint) = scrub {
                 div { class: "scrubber",
-                    div { class: "scrubber-fill", style: "{fill}" }
-                    div { class: "mark", style: "{mark}" }
+                    div { class: "scrubber-fill", style: "{paint.fill}" }
+                    if let Some(span) = paint.span {
+                        div { class: "loop-span", style: "{span}" }
+                    }
+                    if let Some(inn) = paint.inn {
+                        div { class: "loop-in", style: "{inn}" }
+                    }
+                    if let Some(out) = paint.out {
+                        div { class: "loop-out", style: "{out}" }
+                    }
+                    div { class: "mark", style: "{paint.mark}" }
                 }
             }
             if let Some(place) = place {
@@ -239,9 +248,14 @@ fn video_box_style(view: (f64, f64), layer: &FrameLayer, visible: bool) -> Strin
 pub fn sync_video(video: &crate::document::VideoDocument) {
     let paused = if video.paused { "true" } else { "false" };
     let muted = if video.muted { "true" } else { "false" };
+    let (loop_in, loop_out, whole) = match video.loop_span() {
+        Some((start, end)) => (start.to_string(), end.to_string(), "false"),
+        None => (String::new(), String::new(), "true"),
+    };
     let script = format!(
-        "(() => {{ document.querySelectorAll('video').forEach((node) => {{ if (node.id !== 'player') {{ node.pause(); node.muted = true; }} }}); const v = document.getElementById('player'); if (!v) return; v.volume = {volume}; v.muted = {muted}; if (Number.isFinite({position}) && Math.abs((v.currentTime || 0) - {position}) > 0.35) v.currentTime = {position}; if ({paused}) v.pause(); else v.play(); }})()",
+        "(() => {{ document.querySelectorAll('video').forEach((node) => {{ if (node.id !== 'player') {{ node.pause(); node.muted = true; }} }}); const v = document.getElementById('player'); if (!v) return; v.volume = {volume}; v.muted = {muted}; v.playbackRate = {speed}; v.preservesPitch = true; v.webkitPreservesPitch = true; v.loop = {whole}; v.dataset.loopIn = '{loop_in}'; v.dataset.loopOut = '{loop_out}'; if (Number.isFinite({position}) && Math.abs((v.currentTime || 0) - {position}) > 0.35) v.currentTime = {position}; if ({paused}) v.pause(); else v.play(); }})()",
         volume = video.volume,
+        speed = video.speed,
         position = video.position,
     );
     dioxus::document::eval(&script);
@@ -250,7 +264,7 @@ pub fn sync_video(video: &crate::document::VideoDocument) {
 pub fn bind_player(mut state: Signal<AppState>) {
     spawn(async move {
         let mut eval = dioxus::document::eval(
-            "(() => { const attach = () => { const v = document.getElementById('player'); if (!v || v.dataset.bound) return; v.dataset.bound = '1'; const send = () => { if (v.id !== 'player') return; dioxus.send([v.currentTime || 0, v.duration || 0, v.videoWidth || 0, v.videoHeight || 0].join(',')); }; v.addEventListener('timeupdate', send); v.addEventListener('loadedmetadata', send); send(); }; attach(); new MutationObserver(attach).observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['id']}); })()",
+            "(() => { const attach = () => { const v = document.getElementById('player'); if (!v || v.dataset.bound) return; v.dataset.bound = '1'; const send = () => { if (v.id !== 'player') return; dioxus.send([v.currentTime || 0, v.duration || 0, v.videoWidth || 0, v.videoHeight || 0].join(',')); }; v.addEventListener('timeupdate', send); v.addEventListener('loadedmetadata', send); send(); }; const wrap = () => { const v = document.getElementById('player'); if (!v) return; const inn = Number(v.dataset.loopIn); const out = Number(v.dataset.loopOut); if (Number.isFinite(inn) && Number.isFinite(out) && out > inn && v.currentTime >= out) v.currentTime = inn; }; const pump = () => { wrap(); requestAnimationFrame(pump); }; attach(); requestAnimationFrame(pump); new MutationObserver(attach).observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['id']}); })()",
         );
         loop {
             let Ok(text) = eval.recv::<String>().await else {
@@ -355,16 +369,46 @@ fn rect_style(state: &AppState, size: (u32, u32), rect: PixelRect) -> String {
     format!("left:{left}px;top:{top}px;width:{width}px;height:{height}px;")
 }
 
-fn scrub_style(state: &AppState) -> Option<(String, String)> {
+struct ScrubPaint {
+    fill: String,
+    mark: String,
+    span: Option<String>,
+    inn: Option<String>,
+    out: Option<String>,
+}
+
+fn timeline_percent(time: f64, duration: f64) -> Option<f64> {
+    if !time.is_finite() || !duration.is_finite() || duration <= 0.0 {
+        return None;
+    }
+    Some((time / duration).clamp(0.0, 1.0) * 100.0)
+}
+
+fn scrub_style(state: &AppState) -> Option<ScrubPaint> {
     let video = state.video()?;
     if !state.scrub_visible || video.duration <= 0.0 {
         return None;
     }
-    let fraction = (video.position / video.duration).clamp(0.0, 1.0);
-    let percent = fraction * 100.0;
-    let fill = format!("width:{percent}%;");
-    let mark = format!("left:calc({percent}% - 6px);");
-    Some((fill, mark))
+    let percent = timeline_percent(video.position, video.duration).unwrap_or(0.0);
+    let inn = video
+        .loop_in
+        .and_then(|time| timeline_percent(time, video.duration));
+    let out = video
+        .loop_out
+        .and_then(|time| timeline_percent(time, video.duration));
+    let span = match (inn, out) {
+        (Some(start), Some(end)) if end > start => {
+            Some(format!("left:{start}%;width:{}%;", end - start))
+        }
+        _ => None,
+    };
+    Some(ScrubPaint {
+        fill: format!("width:{percent}%;"),
+        mark: format!("left:calc({percent}% - 6px);"),
+        span,
+        inn: inn.map(|at| format!("left:{at}%;")),
+        out: out.map(|at| format!("left:{at}%;")),
+    })
 }
 
 fn scrub_hit(state: &AppState, y: f64) -> bool {
@@ -378,4 +422,59 @@ fn scrub_hit(state: &AppState, y: f64) -> bool {
 fn scrub_fraction(state: &AppState, x: f64) -> f32 {
     let width = (state.view_size.0 - 200.0).max(1.0);
     ((x - 100.0) / width).clamp(0.0, 1.0) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scrub_style, timeline_percent};
+    use crate::document::{Document, VideoDocument};
+    use crate::state::AppState;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_loop_point_lands_on_its_fraction_of_the_timeline() {
+        assert_eq!(timeline_percent(2.5, 10.0), Some(25.0));
+        assert_eq!(timeline_percent(-1.0, 10.0), Some(0.0));
+        assert_eq!(timeline_percent(12.0, 10.0), Some(100.0));
+        assert_eq!(timeline_percent(f64::NAN, 10.0), None);
+        assert_eq!(timeline_percent(1.0, 0.0), None);
+    }
+
+    #[test]
+    fn the_scrubber_marks_the_loop_ends() {
+        let mut state = AppState::new();
+        state.scrub_visible = true;
+        state.document = Some(Document::Video(VideoDocument {
+            path: PathBuf::from("/pictures/a.mp4"),
+            token: 1,
+            duration: 10.0,
+            position: 1.0,
+            paused: false,
+            volume: 1.0,
+            muted: false,
+            speed: 1.0,
+            loop_in: Some(2.0),
+            loop_out: Some(6.0),
+            size: (320, 180),
+        }));
+        let paint = scrub_style(&state);
+        assert!(paint.is_some());
+        if let Some(paint) = paint.as_ref() {
+            assert_eq!(paint.inn.as_deref(), Some("left:20%;"));
+            assert_eq!(paint.out.as_deref(), Some("left:60%;"));
+            assert_eq!(paint.span.as_deref(), Some("left:20%;width:40%;"));
+        }
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.loop_out = None;
+        }
+        let paint = scrub_style(&state);
+        assert!(paint.is_some());
+        if let Some(paint) = paint.as_ref() {
+            assert_eq!(paint.inn.as_deref(), Some("left:20%;"));
+            assert!(paint.out.is_none());
+            assert!(paint.span.is_none());
+        }
+        state.scrub_visible = false;
+        assert!(scrub_style(&state).is_none());
+    }
 }

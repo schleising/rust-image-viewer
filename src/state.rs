@@ -733,6 +733,10 @@ impl AppState {
             Command::NudgeVolume { delta } => self.nudge_volume(delta),
             Command::ToggleMute => self.toggle_mute(),
             Command::Seek { fraction } => self.seek(fraction),
+            Command::SetSpeed { rate } => self.set_speed(rate),
+            Command::SetLoopIn => self.set_loop_in(),
+            Command::SetLoopOut => self.set_loop_out(),
+            Command::ClearLoop => self.clear_loop(),
         }
     }
 
@@ -1058,12 +1062,64 @@ impl AppState {
         Effect::SyncVideo
     }
 
+    fn set_speed(&mut self, rate: f32) -> Effect {
+        let rate = if (rate - 0.5).abs() < 0.01 {
+            0.5
+        } else if (rate - 2.0).abs() < 0.01 {
+            2.0
+        } else {
+            1.0
+        };
+        if let Some(Document::Video(video)) = &mut self.document {
+            video.speed = rate;
+        }
+        Effect::SyncVideo
+    }
+
+    fn set_loop_in(&mut self) -> Effect {
+        self.mark_loop(true)
+    }
+
+    fn set_loop_out(&mut self) -> Effect {
+        self.mark_loop(false)
+    }
+
+    fn mark_loop(&mut self, at_in: bool) -> Effect {
+        if let Some(Document::Video(video)) = &mut self.document {
+            let at = video.position;
+            if at_in {
+                video.loop_in = Some(at);
+            } else {
+                video.loop_out = Some(at);
+            }
+            if let (Some(start), Some(end)) = (video.loop_in, video.loop_out) {
+                if end < start {
+                    video.loop_in = Some(end);
+                    video.loop_out = Some(start);
+                }
+            }
+            video.contain_in_loop();
+            self.poke_scrub();
+        }
+        Effect::SyncVideo
+    }
+
+    fn clear_loop(&mut self) -> Effect {
+        if let Some(Document::Video(video)) = &mut self.document {
+            video.loop_in = None;
+            video.loop_out = None;
+            self.poke_scrub();
+        }
+        Effect::SyncVideo
+    }
+
     pub fn set_video_time(&mut self, position: f64, duration: f64) {
         if let Some(Document::Video(video)) = &mut self.document {
             video.position = position.max(0.0);
             if duration.is_finite() && duration > 0.0 {
                 video.duration = duration;
             }
+            video.contain_in_loop();
         }
     }
 
@@ -1516,8 +1572,70 @@ mod tests {
             paused: false,
             volume: 1.0,
             muted: false,
+            speed: 1.0,
+            loop_in: None,
+            loop_out: None,
             size: (320, 180),
         })
+    }
+
+    #[test]
+    fn video_speed_and_a_loop_span() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.document = Some(video_doc("/pictures/a.mp4", 1));
+        let now = Instant::now();
+        let doubled = state.dispatch(Command::SetSpeed { rate: 2.0 }, now);
+        assert!(matches!(doubled, Effect::SyncVideo));
+        let speed = state.video().map(|video| video.speed).unwrap_or(0.0);
+        assert!((speed - 2.0).abs() < 1e-6);
+        let half = state.dispatch(
+            Command::SetSpeed { rate: 0.5 },
+            now + Duration::from_millis(30),
+        );
+        assert!(matches!(half, Effect::SyncVideo));
+        let speed = state.video().map(|video| video.speed).unwrap_or(0.0);
+        assert!((speed - 0.5).abs() < 1e-6);
+
+        let marked = state.dispatch(Command::SetLoopIn, now + Duration::from_millis(60));
+        assert!(matches!(marked, Effect::SyncVideo));
+        assert!(state.scrub_visible);
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.position = 4.0;
+        }
+        let marked = state.dispatch(Command::SetLoopOut, now + Duration::from_millis(90));
+        assert!(matches!(marked, Effect::SyncVideo));
+        assert_eq!(
+            state.video().and_then(|video| video.loop_span()),
+            Some((1.0, 4.0))
+        );
+        state.set_video_time(4.2, 10.0);
+        let position = state.video().map(|video| video.position).unwrap_or(0.0);
+        assert!((position - 1.0).abs() < 1e-6);
+
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.loop_in = None;
+            video.loop_out = None;
+            video.position = 6.0;
+        }
+        let _ = state.dispatch(Command::SetLoopOut, now + Duration::from_millis(120));
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.position = 2.0;
+        }
+        let _ = state.dispatch(Command::SetLoopIn, now + Duration::from_millis(150));
+        assert_eq!(
+            state.video().and_then(|video| video.loop_span()),
+            Some((2.0, 6.0))
+        );
+        let cleared = state.dispatch(Command::ClearLoop, now + Duration::from_millis(180));
+        assert!(matches!(cleared, Effect::SyncVideo));
+        assert!(state.video().and_then(|video| video.loop_span()).is_none());
+
+        let mut still = AppState::new();
+        still.mode = Mode::Viewer;
+        still.document = Some(image_doc("/pictures/a.png"));
+        let ignored = still.dispatch(Command::SetSpeed { rate: 2.0 }, now);
+        assert!(matches!(ignored, Effect::None));
     }
 
     #[test]
