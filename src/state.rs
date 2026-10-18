@@ -135,6 +135,8 @@ pub struct AppState {
     place_until: Option<Instant>,
     pub drag: Option<Drag>,
     pub loop_drag: Option<LoopEnd>,
+    pub scrub_drag: bool,
+    pub precise_seek: bool,
     pub last_command: Option<String>,
     pub last_command_at: Option<Instant>,
     pub thumb_epoch: u64,
@@ -273,6 +275,8 @@ impl AppState {
             place_until: None,
             drag: None,
             loop_drag: None,
+            scrub_drag: false,
+            precise_seek: false,
             last_command: None,
             last_command_at: None,
             thumb_epoch: 0,
@@ -940,6 +944,7 @@ impl AppState {
         self.message = None;
         self.scrub_visible = false;
         self.loop_drag = None;
+        self.scrub_drag = false;
         self.reveal_place(Instant::now());
         self.bump_anim();
     }
@@ -961,6 +966,7 @@ impl AppState {
         self.place_visible = false;
         self.place_until = None;
         self.loop_drag = None;
+        self.scrub_drag = false;
         self.bump_anim();
     }
 
@@ -1091,12 +1097,10 @@ impl AppState {
     }
 
     pub fn seek(&mut self, fraction: f32) -> Effect {
-        if let Some(Document::Video(video)) = &mut self.document {
-            video.position = video.duration.max(0.0) * f64::from(fraction.clamp(0.0, 1.0));
-            self.poke_scrub();
-            return Effect::SyncVideo;
-        }
         let fraction = fraction.clamp(0.0, 1.0);
+        if self.video().is_some() {
+            return self.seek_video(fraction);
+        }
         let index = self
             .image()
             .filter(|image| image.is_animation())
@@ -1106,11 +1110,29 @@ impl AppState {
             });
         if let Some(index) = index {
             self.frame_index = index;
+            self.animation_paused = true;
             self.animation_done = false;
             self.bump_anim();
             self.poke_scrub();
         }
         Effect::None
+    }
+
+    fn seek_video(&mut self, fraction: f32) -> Effect {
+        let placed = match &mut self.document {
+            Some(Document::Video(video)) => {
+                video.paused = true;
+                video.position = video.duration.max(0.0) * f64::from(fraction);
+                true
+            }
+            _ => false,
+        };
+        if !placed {
+            return Effect::None;
+        }
+        self.precise_seek = true;
+        self.poke_scrub();
+        Effect::SyncVideo
     }
 
     fn set_speed(&mut self, rate: f32) -> Effect {
@@ -1228,10 +1250,13 @@ impl AppState {
 
     pub fn set_video_time(&mut self, position: f64, duration: f64) {
         if let Some(Document::Video(video)) = &mut self.document {
-            video.position = position.max(0.0);
             if duration.is_finite() && duration > 0.0 {
                 video.duration = duration;
             }
+            if video.paused {
+                return;
+            }
+            video.position = position.max(0.0);
             video.contain_in_loop();
         }
     }
@@ -1255,7 +1280,7 @@ impl AppState {
     }
 
     pub fn hide_scrub(&mut self, token: u64) {
-        if self.loop_drag.is_some() {
+        if self.loop_drag.is_some() || self.scrub_drag {
             return;
         }
         if self.scrub_token == token {
@@ -1351,6 +1376,15 @@ impl AppState {
 
     pub fn end_loop_drag(&mut self) {
         self.loop_drag = None;
+    }
+
+    pub fn begin_scrub_drag(&mut self) {
+        self.scrub_drag = true;
+        self.poke_scrub();
+    }
+
+    pub fn end_scrub_drag(&mut self) {
+        self.scrub_drag = false;
     }
 
     pub fn reveal_place(&mut self, now: Instant) {
@@ -1991,6 +2025,28 @@ mod tests {
         assert_eq!(animation.anim_loop_in, Some(0));
         assert_eq!(animation.anim_loop_out, Some(1));
         assert_eq!(animation.loop_drag, Some(LoopEnd::In));
+    }
+
+    #[test]
+    fn scrubbing_pauses_and_keeps_the_chosen_frame() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.document = Some(video_doc("/pictures/a.mp4", 1));
+        let moved = state.dispatch(Command::Seek { fraction: 0.4 }, Instant::now());
+        assert!(matches!(moved, Effect::SyncVideo));
+        assert!(state.precise_seek);
+        assert!(state.video().is_some_and(|video| video.paused));
+        let position = state.video().map(|video| video.position).unwrap_or(-1.0);
+        assert!((position - 4.0).abs() < 1e-6);
+        state.set_video_time(9.0, 10.0);
+        let position = state.video().map(|video| video.position).unwrap_or(-1.0);
+        assert!((position - 4.0).abs() < 1e-6);
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.paused = false;
+        }
+        state.set_video_time(9.0, 10.0);
+        let position = state.video().map(|video| video.position).unwrap_or(-1.0);
+        assert!((position - 9.0).abs() < 1e-6);
     }
 
     #[test]

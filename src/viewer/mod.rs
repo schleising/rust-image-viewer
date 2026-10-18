@@ -115,18 +115,22 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     return;
                 }
                 let point = event.data().element_coordinates();
-                let end = loop_marker_at(&state.read(), point.x, point.y);
-                if let Some(end) = end {
-                    state.write().begin_loop_drag(end);
-                    return;
-                }
-                if scrub_hit(&state.read(), point.y) {
-                    let fraction = scrub_fraction(&state.read(), point.x);
-                    let effect = state
-                        .write()
-                        .dispatch(Command::Seek { fraction }, std::time::Instant::now());
-                    effects::run(state, pointer_window.clone(), effect);
-                    return;
+                let target = timeline_drag(&state.read(), point.x, point.y);
+                match target {
+                    Some(TimelineDrag::Loop(end)) => {
+                        state.write().begin_loop_drag(end);
+                        return;
+                    }
+                    Some(TimelineDrag::Playhead) => {
+                        state.write().begin_scrub_drag();
+                        let fraction = scrub_fraction(&state.read(), point.x);
+                        let effect = state
+                            .write()
+                            .dispatch(Command::Seek { fraction }, std::time::Instant::now());
+                        effects::run(state, pointer_window.clone(), effect);
+                        return;
+                    }
+                    None => {}
                 }
                 let control = event.data().modifiers().contains(Modifiers::CONTROL);
                 state.write().pointer_down((point.x, point.y), control);
@@ -136,10 +140,17 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     return;
                 }
                 let point = event.data().element_coordinates();
-                let dragging = state.read().loop_drag.is_some();
-                if dragging {
+                let dragging_loop = state.read().loop_drag.is_some();
+                let dragging_playhead = state.read().scrub_drag;
+                if dragging_loop || dragging_playhead {
                     let fraction = scrub_fraction(&state.read(), point.x);
-                    let effect = state.write().drag_loop_marker(fraction);
+                    let effect = if dragging_loop {
+                        state.write().drag_loop_marker(fraction)
+                    } else {
+                        state
+                            .write()
+                            .dispatch(Command::Seek { fraction }, std::time::Instant::now())
+                    };
                     effects::run(state, marker_window.clone(), effect);
                     let token = state.write().poke_scrub();
                     spawn(async move {
@@ -160,8 +171,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             },
             onpointerup: move |event| {
                 let point = event.data().element_coordinates();
-                let dragged = state.read().loop_drag.is_some();
+                let dragged = state.read().loop_drag.is_some() || state.read().scrub_drag;
                 state.write().end_loop_drag();
+                state.write().end_scrub_drag();
                 state.write().pointer_up((point.x, point.y));
                 if dragged {
                     let token = state.write().poke_scrub();
@@ -272,7 +284,7 @@ fn video_box_style(view: (f64, f64), layer: &FrameLayer, visible: bool) -> Strin
     format!("{geometry}z-index:{z};opacity:{opacity};")
 }
 
-pub fn sync_video(video: &crate::document::VideoDocument) {
+pub fn sync_video(video: &crate::document::VideoDocument, precise: bool) {
     let paused = if video.paused { "true" } else { "false" };
     let muted = if video.muted { "true" } else { "false" };
     let (loop_in, loop_out, whole) = match video.loop_span() {
@@ -280,10 +292,11 @@ pub fn sync_video(video: &crate::document::VideoDocument) {
         None => (String::new(), String::new(), "true"),
     };
     let script = format!(
-        "(() => {{ document.querySelectorAll('video').forEach((node) => {{ if (node.id !== 'player') {{ node.pause(); node.muted = true; }} }}); const v = document.getElementById('player'); if (!v) return; v.volume = {volume}; v.muted = {muted}; v.playbackRate = {speed}; v.preservesPitch = true; v.webkitPreservesPitch = true; v.loop = {whole}; v.dataset.loopIn = '{loop_in}'; v.dataset.loopOut = '{loop_out}'; if (Number.isFinite({position}) && Math.abs((v.currentTime || 0) - {position}) > 0.35) v.currentTime = {position}; if ({paused}) v.pause(); else v.play(); }})()",
+        "(() => {{ document.querySelectorAll('video').forEach((node) => {{ if (node.id !== 'player') {{ node.pause(); node.muted = true; }} }}); const v = document.getElementById('player'); if (!v) return; v.volume = {volume}; v.muted = {muted}; v.playbackRate = {speed}; v.preservesPitch = true; v.webkitPreservesPitch = true; v.loop = {whole}; v.dataset.loopIn = '{loop_in}'; v.dataset.loopOut = '{loop_out}'; if (Number.isFinite({position}) && ({precise} || Math.abs((v.currentTime || 0) - {position}) > 0.35)) v.currentTime = {position}; if ({paused}) v.pause(); else v.play(); }})()",
         volume = video.volume,
         speed = video.speed,
         position = video.position,
+        precise = if precise { "true" } else { "false" },
     );
     dioxus::document::eval(&script);
 }
@@ -291,7 +304,7 @@ pub fn sync_video(video: &crate::document::VideoDocument) {
 pub fn bind_player(mut state: Signal<AppState>) {
     spawn(async move {
         let mut eval = dioxus::document::eval(
-            "(() => { const attach = () => { const v = document.getElementById('player'); if (!v || v.dataset.bound) return; v.dataset.bound = '1'; const send = () => { if (v.id !== 'player') return; dioxus.send([v.currentTime || 0, v.duration || 0, v.videoWidth || 0, v.videoHeight || 0].join(',')); }; v.addEventListener('timeupdate', send); v.addEventListener('loadedmetadata', send); send(); }; const wrap = () => { const v = document.getElementById('player'); if (!v) return; const inn = Number(v.dataset.loopIn); const out = Number(v.dataset.loopOut); if (Number.isFinite(inn) && Number.isFinite(out) && out > inn && v.currentTime >= out) v.currentTime = inn; }; const pump = () => { wrap(); requestAnimationFrame(pump); }; attach(); requestAnimationFrame(pump); new MutationObserver(attach).observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['id']}); })()",
+            "(() => { const attach = () => { const v = document.getElementById('player'); if (!v || v.dataset.bound) return; v.dataset.bound = '1'; const send = () => { if (v.id !== 'player') return; dioxus.send([v.currentTime || 0, v.duration || 0, v.videoWidth || 0, v.videoHeight || 0].join(',')); }; v.addEventListener('timeupdate', send); v.addEventListener('loadedmetadata', send); send(); }; const wrap = () => { const v = document.getElementById('player'); if (!v) return; const inn = Number(v.dataset.loopIn); const out = Number(v.dataset.loopOut); if (Number.isFinite(inn) && Number.isFinite(out) && out > inn && !v.paused && v.currentTime >= out) v.currentTime = inn; }; const pump = () => { wrap(); requestAnimationFrame(pump); }; attach(); requestAnimationFrame(pump); new MutationObserver(attach).observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['id']}); })()",
         );
         loop {
             let Ok(text) = eval.recv::<String>().await else {
@@ -453,6 +466,40 @@ fn scrub_fraction(state: &AppState, x: f64) -> f32 {
 
 const MARKER_GRAB: f64 = 14.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TimelineDrag {
+    Playhead,
+    Loop(LoopEnd),
+}
+
+fn timeline_drag(state: &AppState, x: f64, y: f64) -> Option<TimelineDrag> {
+    if !scrub_hit(state, y) || state.playback_clock().is_none() {
+        return None;
+    }
+    if !state.scrub_visible {
+        return Some(TimelineDrag::Playhead);
+    }
+    if let Some(end) = loop_marker_at(state, x, y) {
+        let marker_time = state.playback_clock().and_then(|clock| match end {
+            LoopEnd::In => clock.loop_in,
+            LoopEnd::Out => clock.loop_out,
+        });
+        let marker_distance = marker_time
+            .and_then(|time| marker_x(state, time))
+            .map(|at| (x - at).abs())
+            .unwrap_or(f64::MAX);
+        let head_distance = state
+            .playback_clock()
+            .and_then(|clock| marker_x(state, clock.position))
+            .map(|at| (x - at).abs())
+            .unwrap_or(f64::MAX);
+        if marker_distance < head_distance {
+            return Some(TimelineDrag::Loop(end));
+        }
+    }
+    Some(TimelineDrag::Playhead)
+}
+
 fn loop_marker_at(state: &AppState, x: f64, y: f64) -> Option<LoopEnd> {
     if !state.scrub_visible || !scrub_hit(state, y) {
         return None;
@@ -569,5 +616,44 @@ mod tests {
         assert_eq!(loop_marker_at(&state, inn, y - 40.0), None);
         state.scrub_visible = false;
         assert_eq!(loop_marker_at(&state, inn, y), None);
+    }
+
+    #[test]
+    fn the_playhead_scrubs_and_a_nearer_bracket_still_wins() {
+        use super::{timeline_drag, TimelineDrag};
+        use crate::state::LoopEnd;
+
+        let mut state = AppState::new();
+        state.scrub_visible = true;
+        state.document = Some(Document::Video(VideoDocument {
+            path: PathBuf::from("/pictures/a.mp4"),
+            token: 1,
+            duration: 10.0,
+            position: 1.0,
+            paused: false,
+            volume: 1.0,
+            muted: false,
+            speed: 1.0,
+            loop_in: Some(2.0),
+            loop_out: Some(6.0),
+            size: (320, 180),
+        }));
+        let width = (state.view_size.0 - 200.0).max(1.0);
+        let head = 100.0 + 0.1 * width;
+        let out = 100.0 + 0.6 * width;
+        let y = state.view_size.1 - 100.0;
+        assert_eq!(timeline_drag(&state, head, y), Some(TimelineDrag::Playhead));
+        assert_eq!(
+            timeline_drag(&state, out, y),
+            Some(TimelineDrag::Loop(LoopEnd::Out))
+        );
+        assert_eq!(
+            timeline_drag(&state, (head + out) / 2.0, y),
+            Some(TimelineDrag::Playhead)
+        );
+        if let Some(Document::Video(video)) = &mut state.document {
+            video.position = 6.0;
+        }
+        assert_eq!(timeline_drag(&state, out, y), Some(TimelineDrag::Playhead));
     }
 }

@@ -134,8 +134,13 @@ pub fn app() -> Element {
             let epoch = state.read().video_epoch;
             if epoch != synced() {
                 synced.set(epoch);
-                if let Some(video) = state.read().video().cloned() {
-                    viewer::sync_video(&video);
+                let precise = state.read().precise_seek;
+                let video = state.read().video().cloned();
+                if let Some(video) = video {
+                    viewer::sync_video(&video, precise);
+                    if precise {
+                        state.write().precise_seek = false;
+                    }
                 }
             }
             if state.read().scroll_action.is_some() {
