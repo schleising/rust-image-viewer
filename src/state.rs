@@ -125,7 +125,12 @@ pub struct AppState {
     pub last_command_at: Option<Instant>,
     pub thumb_epoch: u64,
     pub video_epoch: u64,
+    pub video_ready_token: u64,
+    pub video_layer: FrameLayer,
     pub scroll_action: Option<ScrollAction>,
+    pub show_front: bool,
+    pub front: FrameLayer,
+    pub back: FrameLayer,
 }
 
 pub struct Drag {
@@ -134,6 +139,27 @@ pub struct Drag {
     pub control: bool,
     pub origin: (f64, f64),
     pub fitted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameLayer {
+    pub url: String,
+    pub size: Option<(u32, u32)>,
+    pub fitted: bool,
+    pub scale: f64,
+    pub translation: (f64, f64),
+}
+
+impl FrameLayer {
+    fn blank() -> Self {
+        Self {
+            url: String::new(),
+            size: None,
+            fitted: true,
+            scale: 1.0,
+            translation: (0.0, 0.0),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -204,7 +230,155 @@ impl AppState {
             last_command_at: None,
             thumb_epoch: 0,
             video_epoch: 0,
+            video_ready_token: 0,
+            video_layer: FrameLayer::blank(),
             scroll_action: None,
+            show_front: true,
+            front: FrameLayer::blank(),
+            back: FrameLayer::blank(),
+        }
+    }
+
+    pub fn image_url(&self) -> String {
+        let preview = if self.preview.is_some() {
+            self.preview_ticket
+        } else {
+            0
+        };
+        format!(
+            "app://image/g/{}/f/{}/p/{preview}",
+            self.image_generation, self.frame_index
+        )
+    }
+
+    fn desired_frame(&self) -> Option<FrameLayer> {
+        if self.video().is_some() {
+            return None;
+        }
+        let size = self.pixel_size()?;
+        if size.0 == 0 || size.1 == 0 {
+            return None;
+        }
+        Some(FrameLayer {
+            url: self.image_url(),
+            size: Some(size),
+            fitted: self.viewport.fitted,
+            scale: self.viewport.scale,
+            translation: self.viewport.translation,
+        })
+    }
+
+    pub fn display_needs_sync(&self) -> bool {
+        let Some(desired) = self.desired_frame() else {
+            return false;
+        };
+        let visible = if self.show_front {
+            &self.front
+        } else {
+            &self.back
+        };
+        if visible.url.is_empty() || visible.url == desired.url {
+            return visible != &desired;
+        }
+        let hidden = if self.show_front {
+            &self.back
+        } else {
+            &self.front
+        };
+        hidden != &desired
+    }
+
+    pub fn sync_display(&mut self) {
+        let Some(desired) = self.desired_frame() else {
+            return;
+        };
+        let visible = if self.show_front {
+            &self.front
+        } else {
+            &self.back
+        };
+        if visible.url.is_empty() || visible.url == desired.url {
+            if visible != &desired {
+                if self.show_front {
+                    self.front = desired;
+                } else {
+                    self.back = desired;
+                }
+            }
+            return;
+        }
+        let hidden = if self.show_front {
+            &self.back
+        } else {
+            &self.front
+        };
+        if hidden != &desired {
+            if self.show_front {
+                self.back = desired;
+            } else {
+                self.front = desired;
+            }
+        }
+    }
+
+    pub fn reveal_would_change(&self, url: &str) -> bool {
+        if url.is_empty() || self.image_url() != url {
+            return false;
+        }
+        let showing_front = if self.front.url == url {
+            true
+        } else if self.back.url == url {
+            false
+        } else {
+            return false;
+        };
+        showing_front != self.show_front
+            || (self.video().is_none() && !self.video_layer.url.is_empty())
+    }
+
+    pub fn reveal_frame(&mut self, url: &str) {
+        if !self.reveal_would_change(url) {
+            return;
+        }
+        if self.front.url == url {
+            self.show_front = true;
+        } else if self.back.url == url {
+            self.show_front = false;
+        }
+        if self.video().is_none() {
+            self.video_layer = FrameLayer::blank();
+        }
+    }
+
+    fn desired_video_layer(&self) -> Option<FrameLayer> {
+        let video = self.video()?;
+        let size = (video.size.0 > 0 && video.size.1 > 0).then_some(video.size);
+        Some(FrameLayer {
+            url: video.token.to_string(),
+            size,
+            fitted: self.viewport.fitted,
+            scale: self.viewport.scale,
+            translation: self.viewport.translation,
+        })
+    }
+
+    pub fn video_frame_needs_sync(&self) -> bool {
+        self.desired_video_layer()
+            .is_some_and(|desired| self.video_layer != desired)
+    }
+
+    pub fn retain_video_frame(&mut self) {
+        let Some(desired) = self.desired_video_layer() else {
+            return;
+        };
+        if self.video_layer != desired {
+            self.video_layer = desired;
+        }
+    }
+
+    pub fn mark_video_ready(&mut self, token: u64) {
+        if token == self.video_epoch {
+            self.video_ready_token = token;
         }
     }
 
@@ -603,6 +777,11 @@ impl AppState {
         self.viewport = Viewport::fitted();
         self.phase = Phase::Idle;
         self.busy = false;
+        self.show_front = true;
+        self.front = FrameLayer::blank();
+        self.back = FrameLayer::blank();
+        self.video_ready_token = 0;
+        self.video_layer = FrameLayer::blank();
         self.bump_anim();
     }
 
@@ -1222,6 +1401,48 @@ mod tests {
         assert_eq!(state.folder.scroll_top, 48.0);
         assert_eq!(state.scroll_action, Some(ScrollAction::Restore(48.0)));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_visible_picture_stays_until_the_next_one_has_loaded() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (200.0, 100.0);
+        state.document = Some(image_doc("/pictures/a.png"));
+        state.image_generation = 1;
+        let size = state.pixel_size().unwrap_or((0, 0));
+        state.viewport.refit(state.view_size, size);
+        state.sync_display();
+        assert!(!state.display_needs_sync());
+        assert!(!state.video_frame_needs_sync());
+        assert!(state.show_front);
+        assert!(state.front.url.contains("/g/1/"));
+        assert!(state.front.url.contains("/p/0"));
+        assert!(state.back.url.is_empty());
+        let held = state.front.clone();
+
+        state.image_generation = 2;
+        state.viewport.translation = (30.0, 40.0);
+        state.viewport.fitted = false;
+        assert!(state.display_needs_sync());
+        state.sync_display();
+        assert!(!state.display_needs_sync());
+        assert!(state.show_front);
+        assert_eq!(state.front, held);
+        assert!(state.back.url.contains("/g/2/"));
+        assert_eq!(state.back.translation, (30.0, 40.0));
+
+        state.viewport.translation = (9.0, 9.0);
+        state.sync_display();
+        assert!(!state.display_needs_sync());
+        assert_eq!(state.front, held);
+        assert_eq!(state.back.translation, (9.0, 9.0));
+
+        let loaded = state.back.url.clone();
+        state.reveal_frame(&loaded);
+        assert!(!state.show_front);
+        state.reveal_frame(&held.url);
+        assert!(!state.show_front);
     }
 
     #[test]

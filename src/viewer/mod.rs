@@ -1,32 +1,80 @@
 use crate::command::Command;
 use crate::effects;
-use crate::state::AppState;
+use crate::state::{AppState, FrameLayer};
 use crate::viewport::{self, PixelRect};
 use dioxus::desktop::DesktopContext;
 use dioxus::html::geometry::WheelDelta;
 use dioxus::prelude::*;
 
 pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
-    let video = state.read().video().cloned();
-    let frame = state.read().frame_index;
-    let generation = state.read().image_generation;
-    let preview = state.read().preview_ticket;
-    let busy = state.read().busy;
-    let size = state.read().pixel_size();
-    let view_size = state.read().view_size;
-    let fitted = state.read().viewport.fitted;
-    let scale = state.read().viewport.scale;
-    let translation = state.read().viewport.translation;
-    let selection = selection_style(&state.read());
-    let scrub = scrub_style(&state.read());
-    let class = if busy { "stage busy" } else { "stage" };
+    let sync_video = state.read().video_frame_needs_sync();
+    if sync_video {
+        state.write().retain_video_frame();
+    }
+    let sync_image = state.read().display_needs_sync();
+    if sync_image {
+        state.write().sync_display();
+    }
+    let (
+        video,
+        view_size,
+        selection,
+        scrub,
+        show_front,
+        front,
+        back,
+        video_epoch,
+        video_layer,
+        hide_stills,
+    ) = {
+        let snapshot = state.read();
+        let video = snapshot.video().cloned();
+        let hide_stills = video.is_some() && snapshot.video_ready_token == snapshot.video_epoch;
+        (
+            video,
+            snapshot.view_size,
+            selection_style(&snapshot),
+            scrub_style(&snapshot),
+            snapshot.show_front,
+            snapshot.front.clone(),
+            snapshot.back.clone(),
+            snapshot.video_epoch,
+            snapshot.video_layer.clone(),
+            hide_stills,
+        )
+    };
     let pointer_window = window.clone();
     let click_window = window.clone();
-    let geometry = media_style(view_size, size, scale, translation, fitted);
+    let holding_video = video.is_none() && !video_layer.url.is_empty();
+    let show_video = hide_stills || holding_video;
+    let video_opacity = if show_video { "1" } else { "0" };
+    let video_style = format!(
+        "{}z-index:5;opacity:{video_opacity};",
+        media_style(
+            view_size,
+            video_layer.size,
+            video_layer.scale,
+            video_layer.translation,
+            video_layer.fitted,
+        )
+    );
+    let player_token = video
+        .as_ref()
+        .map(|item| item.token)
+        .or_else(|| video_layer.url.parse().ok());
+    let player_paused = video.as_ref().map(|item| item.paused).unwrap_or(true);
+    let front_url = front.url.clone();
+    let back_url = back.url.clone();
+    let front_load = front_url.clone();
+    let back_load = back_url.clone();
+    let front_style = frame_style(view_size, &front, show_front && !show_video);
+    let back_style = frame_style(view_size, &back, !show_front && !show_video);
+    let front_src = frame_src(&front_url);
+    let back_src = frame_src(&back_url);
     rsx! {
         div {
             id: "stage",
-            class: "{class}",
+            class: "stage",
             onmounted: move |_| {
                 dioxus::document::eval(
                     "(() => { const stage = document.getElementById('stage'); if (!stage || stage.dataset.capture) return; stage.dataset.capture = '1'; stage.addEventListener('pointerdown', (event) => { if (event.button === 0) stage.setPointerCapture(event.pointerId); }); })()",
@@ -75,19 +123,38 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     .dispatch(Command::ToggleFullscreen, std::time::Instant::now());
                 effects::run(state, click_window.clone(), effect);
             },
-            if let Some(video) = video {
+            img {
+                id: "frame-back",
+                class: "frame",
+                src: "{back_src}",
+                style: "{back_style}",
+                onload: move |_| reveal_loaded(&mut state, &back_load),
+            }
+            img {
+                id: "frame-front",
+                class: "frame",
+                src: "{front_src}",
+                style: "{front_style}",
+                onload: move |_| reveal_loaded(&mut state, &front_load),
+            }
+            if let Some(token) = player_token {
                 video {
+                    key: "{token}",
                     id: "player",
-                    src: "app://video/{video.token}",
-                    autoplay: !video.paused,
+                    src: "app://video/{token}",
+                    autoplay: !player_paused,
                     r#loop: true,
-                    style: "{geometry}",
-                }
-            } else {
-                img {
-                    class: "frame",
-                    src: "app://image/current?g={generation}&f={frame}&p={preview}",
-                    style: "{geometry}",
+                    style: "{video_style}",
+                    onloadeddata: move |_| {
+                        let pending = {
+                            let snapshot = state.read();
+                            snapshot.video_epoch == video_epoch
+                                && snapshot.video_ready_token != video_epoch
+                        };
+                        if pending {
+                            state.write().mark_video_ready(video_epoch);
+                        }
+                    },
                 }
             }
             if let Some(style) = selection {
@@ -143,6 +210,43 @@ fn apply_player_text(state: &mut Signal<AppState>, text: &str) {
         state.write().set_video_size((width, height), duration);
     }
     state.write().set_video_time(position, duration);
+}
+
+const FRAME_PLACEHOLDER: &str =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+fn frame_src(url: &str) -> String {
+    if url.is_empty() {
+        FRAME_PLACEHOLDER.to_string()
+    } else {
+        url.to_string()
+    }
+}
+
+fn reveal_loaded(state: &mut Signal<AppState>, url: &str) {
+    if url.is_empty() {
+        return;
+    }
+    let reveal = state.read().reveal_would_change(url);
+    if reveal {
+        state.write().reveal_frame(url);
+    }
+}
+
+fn frame_style(view: (f64, f64), layer: &FrameLayer, on_top: bool) -> String {
+    if layer.url.is_empty() {
+        return "position:absolute;width:0;height:0;opacity:0;".into();
+    }
+    let geometry = media_style(
+        view,
+        layer.size,
+        layer.scale,
+        layer.translation,
+        layer.fitted,
+    );
+    let z = if on_top { 3 } else { 1 };
+    let opacity = if on_top { "1" } else { "0" };
+    format!("{geometry}z-index:{z};opacity:{opacity};")
 }
 
 fn media_style(

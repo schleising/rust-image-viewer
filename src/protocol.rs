@@ -24,6 +24,7 @@ struct Thumb {
 struct Store {
     folder_gen: u64,
     image_gen: u64,
+    retained_gen: u64,
     frame: usize,
     frames: Arc<[AnimFrame]>,
     preview: Option<Arc<RgbaImage>>,
@@ -37,6 +38,7 @@ static STORE: std::sync::LazyLock<Mutex<Store>> = std::sync::LazyLock::new(|| {
     Mutex::new(Store {
         folder_gen: 0,
         image_gen: 0,
+        retained_gen: 0,
         frame: 0,
         frames: Arc::from([]),
         preview: None,
@@ -66,9 +68,13 @@ pub fn publish(state: &AppState) {
     {
         return;
     }
+    if store.image_gen != generation {
+        store.retained_gen = store.image_gen;
+    }
+    let retained = store.retained_gen;
     store
         .encoded
-        .retain(|(gen, _, cached_ticket), _| *gen == generation && *cached_ticket == ticket);
+        .retain(|(gen, _, _), _| *gen == generation || *gen == retained);
     store.folder_gen = state.folder_generation;
     store.image_gen = generation;
     store.frame = state.frame_index;
@@ -117,8 +123,8 @@ pub fn handle(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     if let Some(rest) = path.strip_prefix("/thumb/") {
         return thumb_response(rest, query);
     }
-    if path == "/image/current" {
-        return image_response(query);
+    if let Some(spec) = path.strip_prefix("/image/") {
+        return image_response(spec);
     }
     if let Some(token) = path.strip_prefix("/video/") {
         return video_response(token, request.headers().get(http::header::RANGE));
@@ -164,48 +170,69 @@ fn thumb_response(rest: &str, query: &str) -> Response<Cow<'static, [u8]>> {
     }
 }
 
-fn image_response(query: &str) -> Response<Cow<'static, [u8]>> {
-    let requested_gen = query_u64(query, "g").unwrap_or(0);
-    let requested_frame = query_u64(query, "f").unwrap_or(0) as usize;
-    let (image, preview, generation, frame, ticket) = {
+fn image_response(spec: &str) -> Response<Cow<'static, [u8]>> {
+    let (requested_gen, requested_frame, requested_preview) = image_spec(spec);
+    let cache_key = (requested_gen, requested_frame, requested_preview);
+    let cached = wake::lock(&*STORE)
+        .encoded
+        .get(&cache_key)
+        .map(|(bytes, mime)| (bytes.clone(), *mime));
+    if let Some((bytes, mime)) = cached {
+        return bytes_response(200, mime, bytes, &[]);
+    }
+    let (image, preview) = {
         let store = wake::lock(&*STORE);
-        if store.image_gen != requested_gen {
+        if store.image_gen != requested_gen || store.preview_ticket != requested_preview {
             return empty(404);
         }
-        let preview = store.preview.clone();
-        let frame = if preview.is_some() {
-            store.frame
+        if store.preview.is_some() {
+            (None, store.preview.clone())
         } else {
-            requested_frame
-        };
-        let image = if preview.is_none() {
-            store.frames.get(frame).map(|item| Arc::clone(&item.image))
-        } else {
-            None
-        };
-        (image, preview, store.image_gen, frame, store.preview_ticket)
+            (
+                store
+                    .frames
+                    .get(requested_frame)
+                    .map(|item| Arc::clone(&item.image)),
+                None,
+            )
+        }
     };
     let shown = preview.or(image);
     let Some(shown) = shown else {
         return empty(404);
     };
-    let cache_key = (generation, frame, ticket);
-    if let Some((bytes, mime)) = wake::lock(&*STORE).encoded.get(&cache_key).cloned() {
-        return bytes_response(200, mime, bytes, &[]);
-    }
-    let preview_encode = ticket != 0;
+    let preview_encode = requested_preview != 0;
     match document::encode_for_view(&shown, preview_encode) {
         Ok((bytes, mime)) => {
             wake::lock(&*STORE)
                 .encoded
                 .insert(cache_key, (bytes.clone(), mime));
-            bytes_response(200, mime, bytes, &[("Cache-Control", "no-store".into())])
+            bytes_response(200, mime, bytes, &[])
         }
         Err(error) => {
             tracing::warn!(%error, "could not encode the frame");
             empty(500)
         }
     }
+}
+
+fn image_spec(spec: &str) -> (u64, usize, u64) {
+    let mut generation = 0_u64;
+    let mut frame = 0_usize;
+    let mut preview = 0_u64;
+    let mut parts = spec.split('/');
+    while let Some(label) = parts.next() {
+        let Some(value) = parts.next() else {
+            break;
+        };
+        match label {
+            "g" => generation = value.parse().unwrap_or(0),
+            "f" => frame = value.parse().unwrap_or(0),
+            "p" => preview = value.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    (generation, frame, preview)
 }
 
 fn video_response(token: &str, range: Option<&http::HeaderValue>) -> Response<Cow<'static, [u8]>> {
@@ -297,10 +324,6 @@ fn parse_range(header: &str, length: u64) -> Option<(u64, u64)> {
         return None;
     }
     Some((start, end))
-}
-
-fn query_u64(query: &str, key: &str) -> Option<u64> {
-    query_value(query, key)?.parse().ok()
 }
 
 fn query_u32(query: &str, key: &str) -> Option<u32> {
