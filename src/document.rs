@@ -401,6 +401,34 @@ pub fn composite_webp(
     shown
 }
 
+pub fn animation_duration(frames: &[AnimFrame]) -> f64 {
+    frames.iter().map(|frame| frame.delay.as_secs_f64()).sum()
+}
+
+pub fn frame_start(frames: &[AnimFrame], index: usize) -> f64 {
+    frames
+        .iter()
+        .take(index)
+        .map(|frame| frame.delay.as_secs_f64())
+        .sum()
+}
+
+pub fn frame_at_time(frames: &[AnimFrame], time: f64) -> usize {
+    if frames.is_empty() {
+        return 0;
+    }
+    let time = if time.is_finite() { time } else { 0.0 };
+    let mut elapsed = 0.0;
+    for (index, frame) in frames.iter().enumerate() {
+        let delay = frame.delay.as_secs_f64();
+        if time < elapsed + delay || index + 1 == frames.len() {
+            return index;
+        }
+        elapsed += delay;
+    }
+    frames.len() - 1
+}
+
 pub fn advance_frame(
     index: usize,
     frame_count: usize,

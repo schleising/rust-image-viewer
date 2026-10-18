@@ -88,7 +88,7 @@ Loop count:
 - GIF with no Netscape loop extension plays once. A Netscape count of 0 repeats forever. A count of N plays N times.
 - WebP ANIM count 0 repeats forever. A count of N plays N times.
 
-Playback starts when the image opens. Space pauses and resumes. The clock stops when the viewer leaves the file. Zoom, pan, and selection belong to the viewport, so they stay put across frames. Selection and crop use canvas pixels and the same rectangle on every frame.
+Playback starts when the image opens. Space pauses and resumes. The Video menu sets half speed, normal speed, or double speed, and each frame's delay is divided by that rate. I marks the current frame as the start of a loop, and O marks the current frame as the end. Playback then repeats that inclusive run of frames instead of the file's loop count. Points marked in reverse order are swapped. A span shorter than 0.05 s is ignored. Clear Loop returns to the file's loop count. The same scrubber as a video shows the playhead at the start of the current frame, and the yellow brackets at the start of the in frame and the end of the out frame. A click seeks to the frame covering that fraction. The clock stops when the viewer leaves the file. Zoom, pan, and selection belong to the viewport, so they stay put across frames. Selection and crop use canvas pixels and the same rectangle on every frame.
 
 A committed edit, including crop, runs on every composited frame and keeps the delays, the loop count, and the canvas size. The adjust dialog previews the frame that is currently showing, and OK applies those factors to every frame as one undo step. Undo stores the previous frame list, still capped at 16 lists.
 
@@ -123,7 +123,7 @@ Videos loop. Space pauses and resumes. The Video menu sets playback to half spee
 
 The video on screen stays visible when it is paused, skipped, or seeked, and while the next video is still loading. The next video replaces it when that element has loaded its first frame. Still images stay hidden for as long as a video is showing, so a pause does not reveal the last picture.
 
-Image commands are enabled for an open image, including an animation. Video commands other than Play / Pause are enabled only for a video. Play / Pause is enabled for a video or an animated image. File, Show, Image, and Video menus are enabled only while a file is open. A disabled command does not receive its shortcut, which is what keeps Shift-Left and Shift-Right from meaning both "colour" and "seek" at once.
+Image commands are enabled for an open image, including an animation. Skip, volume, and mute are enabled only for a video. Play / Pause, playback speed, and the loop points are enabled for a video or an animated image. File, Show, Image, and Video menus are enabled only while a file is open. A disabled command does not receive its shortcut, which is what keeps Shift-Left and Shift-Right from meaning both "colour" and "seek" at once.
 
 ### Shortcuts
 
@@ -150,9 +150,9 @@ These are physical Mac keys. Command is the modifier Dioxus calls Meta. Option i
 | Super Resolution | Control-S | Image |
 | Undo | Command-Z | Image undo stack is non-empty |
 | Play / Pause | Space | Video, or an animated image |
-| Half / double speed | Video menu | Video |
-| Loop in / out | I / O | Video |
-| Clear loop | Video menu | Video |
+| Half / double speed | Video menu | Video, or an animated image |
+| Loop in / out | I / O | Video, or an animated image |
+| Clear loop | Video menu | Video, or an animated image |
 | Skip | Shift-Right / Shift-Left | Video |
 | Volume | Shift-Up / Shift-Down | Video |
 | Mute | Shift-M | Video |
@@ -696,7 +696,7 @@ That route honours `Range`. `Range: bytes=start-end` returns 206 with `Content-R
 
 `play`, `pause`, `currentTime`, `volume`, `muted`, `playbackRate`, and `preservesPitch` are set through `dioxus::document::eval`, because they are DOM properties. `timeupdate` and `loadedmetadata` write position and duration back into the document. A frame callback wraps a loop span, because `timeupdate` is too coarse.
 
-The scrubber is Dioxus markup using the geometry in section 1. It sits above the video. A click sends `Command::Seek { fraction }`. The hit target is the inset bar, with a few pixels of slack vertically, not the 4 px of paint alone.
+The scrubber is Dioxus markup using the geometry in section 1. It sits above a video or an animation. A click sends `Command::Seek { fraction }`. On an animation that fraction picks the frame covering that share of the total delay. The hit target is the inset bar, with a few pixels of slack vertically, not the 4 px of paint alone.
 
 ## 10. Protocol
 

@@ -94,14 +94,12 @@ impl Command {
             Self::CropToSelection => flags.image && flags.selection && !flags.busy,
             Self::ShowInfo => flags.image,
             Self::PlayPause => flags.video || flags.animated,
-            Self::Skip { .. }
-            | Self::NudgeVolume { .. }
-            | Self::ToggleMute
-            | Self::Seek { .. }
+            Self::Skip { .. } | Self::NudgeVolume { .. } | Self::ToggleMute => flags.video,
+            Self::Seek { .. }
             | Self::SetSpeed { .. }
             | Self::SetLoopIn
             | Self::SetLoopOut
-            | Self::ClearLoop => flags.video,
+            | Self::ClearLoop => flags.video || flags.animated,
         }
     }
 
@@ -289,9 +287,13 @@ mod tests {
         assert!(Command::CropToSelection.available(&image));
         assert!(!Command::Skip { delta_ms: 5_000 }.available(&image));
         assert!(Command::PlayPause.available(&image) == image.animated);
+        assert!(!Command::SetSpeed { rate: 2.0 }.available(&image));
 
         image.animated = true;
         assert!(Command::PlayPause.available(&image));
+        assert!(Command::SetSpeed { rate: 2.0 }.available(&image));
+        assert!(Command::SetLoopIn.available(&image));
+        assert!(!Command::Skip { delta_ms: 5_000 }.available(&image));
 
         let enter = commands_for_key(Mods::default(), ShortcutKey::Enter);
         assert_eq!(enter, vec![Command::ToggleFullscreen]);

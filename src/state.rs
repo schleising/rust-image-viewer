@@ -112,6 +112,9 @@ pub struct AppState {
     pub loops_left: Option<u16>,
     pub animation_paused: bool,
     pub animation_done: bool,
+    pub anim_speed: f32,
+    pub anim_loop_in: Option<usize>,
+    pub anim_loop_out: Option<usize>,
     pub anim_token: u64,
     pub dialog: Option<Dialog>,
     pub adjust_base: Option<Arc<[AnimFrame]>>,
@@ -197,6 +200,14 @@ impl Default for AppState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaybackClock {
+    pub position: f64,
+    pub duration: f64,
+    pub loop_in: Option<f64>,
+    pub loop_out: Option<f64>,
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {
@@ -223,6 +234,9 @@ impl AppState {
             loops_left: None,
             animation_paused: false,
             animation_done: false,
+            anim_speed: 1.0,
+            anim_loop_in: None,
+            anim_loop_out: None,
             anim_token: 0,
             dialog: None,
             adjust_base: None,
@@ -898,6 +912,9 @@ impl AppState {
         self.frame_index = 0;
         self.animation_paused = false;
         self.animation_done = false;
+        self.anim_speed = 1.0;
+        self.anim_loop_in = None;
+        self.anim_loop_out = None;
         self.preview = None;
         self.adjust_base = None;
         self.dialog = None;
@@ -1057,9 +1074,24 @@ impl AppState {
     pub fn seek(&mut self, fraction: f32) -> Effect {
         if let Some(Document::Video(video)) = &mut self.document {
             video.position = video.duration.max(0.0) * f64::from(fraction.clamp(0.0, 1.0));
+            self.poke_scrub();
+            return Effect::SyncVideo;
         }
-        self.poke_scrub();
-        Effect::SyncVideo
+        let fraction = fraction.clamp(0.0, 1.0);
+        let index = self
+            .image()
+            .filter(|image| image.is_animation())
+            .map(|image| {
+                let time = document::animation_duration(&image.frames) * f64::from(fraction);
+                document::frame_at_time(&image.frames, time)
+            });
+        if let Some(index) = index {
+            self.frame_index = index;
+            self.animation_done = false;
+            self.bump_anim();
+            self.poke_scrub();
+        }
+        Effect::None
     }
 
     fn set_speed(&mut self, rate: f32) -> Effect {
@@ -1072,8 +1104,13 @@ impl AppState {
         };
         if let Some(Document::Video(video)) = &mut self.document {
             video.speed = rate;
+            return Effect::SyncVideo;
         }
-        Effect::SyncVideo
+        if self.image().is_some_and(ImageDocument::is_animation) {
+            self.anim_speed = rate;
+            self.bump_anim();
+        }
+        Effect::None
     }
 
     fn set_loop_in(&mut self) -> Effect {
@@ -1100,8 +1137,58 @@ impl AppState {
             }
             video.contain_in_loop();
             self.poke_scrub();
+            return Effect::SyncVideo;
         }
-        Effect::SyncVideo
+        self.mark_anim_loop(at_in);
+        Effect::None
+    }
+
+    fn mark_anim_loop(&mut self, at_in: bool) {
+        let Some(count) = self
+            .image()
+            .filter(|image| image.is_animation())
+            .map(|image| image.frames.len())
+        else {
+            return;
+        };
+        if count == 0 {
+            return;
+        }
+        let index = self.frame_index.min(count - 1);
+        if at_in {
+            self.anim_loop_in = Some(index);
+        } else {
+            self.anim_loop_out = Some(index);
+        }
+        if let (Some(start), Some(end)) = (self.anim_loop_in, self.anim_loop_out) {
+            if end < start {
+                self.anim_loop_in = Some(end);
+                self.anim_loop_out = Some(start);
+            }
+        }
+        if let Some((start, end)) = self.anim_loop_range() {
+            self.animation_done = false;
+            if self.frame_index < start || self.frame_index > end {
+                self.frame_index = start;
+            }
+        }
+        self.bump_anim();
+        self.poke_scrub();
+    }
+
+    fn anim_loop_range(&self) -> Option<(usize, usize)> {
+        let frames = &self.image()?.frames;
+        let start = self.anim_loop_in?;
+        let end = self.anim_loop_out?;
+        if start >= frames.len() || end >= frames.len() {
+            return None;
+        }
+        let span = document::frame_start(frames, end) + frames[end].delay.as_secs_f64()
+            - document::frame_start(frames, start);
+        if span < 0.05 {
+            return None;
+        }
+        Some((start, end))
     }
 
     fn clear_loop(&mut self) -> Effect {
@@ -1109,8 +1196,15 @@ impl AppState {
             video.loop_in = None;
             video.loop_out = None;
             self.poke_scrub();
+            return Effect::SyncVideo;
         }
-        Effect::SyncVideo
+        if self.image().is_some_and(ImageDocument::is_animation) {
+            self.anim_loop_in = None;
+            self.anim_loop_out = None;
+            self.bump_anim();
+            self.poke_scrub();
+        }
+        Effect::None
     }
 
     pub fn set_video_time(&mut self, position: f64, duration: f64) {
@@ -1167,6 +1261,35 @@ impl AppState {
         self.place_visible = false;
     }
 
+    pub fn playback_clock(&self) -> Option<PlaybackClock> {
+        if let Some(video) = self.video() {
+            return Some(PlaybackClock {
+                position: video.position,
+                duration: video.duration,
+                loop_in: video.loop_in,
+                loop_out: video.loop_out,
+            });
+        }
+        let image = self.image()?;
+        if !image.is_animation() {
+            return None;
+        }
+        let frames = image.frames.as_ref();
+        Some(PlaybackClock {
+            position: document::frame_start(frames, self.frame_index),
+            duration: document::animation_duration(frames),
+            loop_in: self
+                .anim_loop_in
+                .filter(|index| *index < frames.len())
+                .map(|index| document::frame_start(frames, index)),
+            loop_out: self.anim_loop_out.and_then(|index| {
+                frames
+                    .get(index)
+                    .map(|frame| document::frame_start(frames, index) + frame.delay.as_secs_f64())
+            }),
+        })
+    }
+
     pub fn place_label(&self) -> Option<String> {
         let paths = catalog::media_paths(&self.folder);
         let total = paths.len();
@@ -1184,7 +1307,12 @@ impl AppState {
         }
         let image = self.image()?;
         let frame = image.frames.get(self.frame_index)?;
-        Some(frame.delay.max(Duration::from_millis(1)))
+        let speed = if self.anim_speed > 0.0 {
+            self.anim_speed
+        } else {
+            1.0
+        };
+        Some(frame.delay.div_f32(speed).max(Duration::from_millis(1)))
     }
 
     pub fn animation_running(&self) -> bool {
@@ -1200,9 +1328,17 @@ impl AppState {
             return;
         }
         let count = self.image().map(|image| image.frames.len()).unwrap_or(0);
-        match document::advance_frame(self.frame_index, count, &mut self.loops_left) {
-            Some(index) => self.frame_index = index,
-            None => self.animation_done = true,
+        if let Some((start, end)) = self.anim_loop_range() {
+            if self.frame_index >= end || self.frame_index < start {
+                self.frame_index = start;
+            } else {
+                self.frame_index += 1;
+            }
+        } else {
+            match document::advance_frame(self.frame_index, count, &mut self.loops_left) {
+                Some(index) => self.frame_index = index,
+                None => self.animation_done = true,
+            }
         }
         self.bump_anim();
     }
@@ -1639,6 +1775,63 @@ mod tests {
     }
 
     #[test]
+    fn an_animation_uses_speed_and_a_frame_loop() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.document = Some(animation_doc());
+        let now = Instant::now();
+        let delay = state.animation_delay().unwrap_or_default();
+        assert_eq!(delay, Duration::from_millis(100));
+        let doubled = state.dispatch(Command::SetSpeed { rate: 2.0 }, now);
+        assert!(matches!(doubled, Effect::None));
+        let delay = state.animation_delay().unwrap_or_default();
+        assert_eq!(delay, Duration::from_millis(50));
+
+        state.frame_index = 1;
+        let _ = state.dispatch(Command::SetLoopIn, now + Duration::from_millis(40));
+        state.frame_index = 2;
+        let _ = state.dispatch(Command::SetLoopOut, now + Duration::from_millis(80));
+        assert_eq!(state.anim_loop_in, Some(1));
+        assert_eq!(state.anim_loop_out, Some(2));
+        let clock = state.playback_clock();
+        let inn = clock
+            .as_ref()
+            .and_then(|clock| clock.loop_in)
+            .unwrap_or(-1.0);
+        let out = clock
+            .as_ref()
+            .and_then(|clock| clock.loop_out)
+            .unwrap_or(-1.0);
+        assert!((inn - 0.1).abs() < 1e-9);
+        assert!((out - 0.3).abs() < 1e-9);
+        let token = state.anim_token;
+        state.advance_animation(token);
+        assert_eq!(state.frame_index, 1);
+        let token = state.anim_token;
+        state.advance_animation(token);
+        assert_eq!(state.frame_index, 2);
+
+        state.frame_index = 0;
+        let _ = state.dispatch(Command::SetLoopOut, now + Duration::from_millis(120));
+        assert_eq!(state.anim_loop_in, Some(0));
+        assert_eq!(state.anim_loop_out, Some(1));
+
+        let _ = state.dispatch(Command::ClearLoop, now + Duration::from_millis(160));
+        assert!(state.anim_loop_in.is_none());
+        state.frame_index = 2;
+        let token = state.anim_token;
+        state.advance_animation(token);
+        assert_eq!(state.frame_index, 3);
+
+        let sought = state.dispatch(
+            Command::Seek { fraction: 0.0 },
+            now + Duration::from_millis(200),
+        );
+        assert!(matches!(sought, Effect::None));
+        assert_eq!(state.frame_index, 0);
+    }
+
+    #[test]
     fn opening_a_file_shows_the_viewer_before_the_folder_is_listed() {
         let mut state = AppState::new();
         assert_eq!(state.mode, Mode::Browser);
@@ -1662,6 +1855,24 @@ mod tests {
         assert_eq!(state.mode, Mode::Viewer);
         assert_eq!(state.folder.highlighted, 0);
         assert!(state.pending_file.is_none());
+    }
+
+    fn animation_doc() -> Document {
+        let frames: Arc<[AnimFrame]> = Arc::from(vec![frame(), frame(), frame(), frame()]);
+        Document::Image(ImageDocument {
+            path: PathBuf::from("/pictures/a.gif"),
+            metadata: ImageMetadata {
+                format_name: "GIF".into(),
+                description: "GIF (Graphics Interchange Format)".into(),
+                width: 2,
+                height: 2,
+                mode: "P".into(),
+            },
+            frames: Arc::clone(&frames),
+            loop_count: Loop::Once,
+            undo: Vec::new(),
+            clean: frames,
+        })
     }
 
     fn image_doc(name: &str) -> Document {

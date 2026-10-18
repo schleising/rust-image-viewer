@@ -132,7 +132,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 let point = event.data().element_coordinates();
                 state.write().pointer_move((point.x, point.y));
                 state.write().reveal_place(std::time::Instant::now());
-                if state.read().video().is_some() {
+                if state.read().playback_clock().is_some() {
                     let token = state.write().poke_scrub();
                     spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -385,17 +385,17 @@ fn timeline_percent(time: f64, duration: f64) -> Option<f64> {
 }
 
 fn scrub_style(state: &AppState) -> Option<ScrubPaint> {
-    let video = state.video()?;
-    if !state.scrub_visible || video.duration <= 0.0 {
+    let clock = state.playback_clock()?;
+    if !state.scrub_visible || clock.duration <= 0.0 {
         return None;
     }
-    let percent = timeline_percent(video.position, video.duration).unwrap_or(0.0);
-    let inn = video
+    let percent = timeline_percent(clock.position, clock.duration).unwrap_or(0.0);
+    let inn = clock
         .loop_in
-        .and_then(|time| timeline_percent(time, video.duration));
-    let out = video
+        .and_then(|time| timeline_percent(time, clock.duration));
+    let out = clock
         .loop_out
-        .and_then(|time| timeline_percent(time, video.duration));
+        .and_then(|time| timeline_percent(time, clock.duration));
     let span = match (inn, out) {
         (Some(start), Some(end)) if end > start => {
             Some(format!("left:{start}%;width:{}%;", end - start))
@@ -412,7 +412,7 @@ fn scrub_style(state: &AppState) -> Option<ScrubPaint> {
 }
 
 fn scrub_hit(state: &AppState, y: f64) -> bool {
-    if state.video().is_none() {
+    if state.playback_clock().is_none() {
         return false;
     }
     let bar = state.view_size.1 - 100.0;
