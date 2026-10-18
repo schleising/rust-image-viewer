@@ -16,12 +16,16 @@ One window, two modes. The browser lists a folder. The viewer shows one image or
 
 ### Startup
 
-The window opens at origin (300, 100), size 1024×768, minimum size 1024×768, decorated and resizable. Escape quits, unless a dialog is open. A dialog consumes Escape and cancels. Double-click toggles fullscreen only while a file is open.
+The window opens at origin (300, 100), size 1024×768, minimum size 1024×768, decorated and resizable. Escape quits, unless a dialog is open. A dialog consumes Escape and cancels.
+
+Fullscreen is only available while a file is open. There is no Full Screen menu item. Double-click on the open file toggles it. Return (Enter, including the numeric keypad) toggles it as well, and Return again leaves fullscreen. The double-click that opened the file from the grid is ignored for 400 ms, so that gesture does not also enter fullscreen. Keyboard Return is not delayed.
+
+Leaving fullscreen, and returning to the browser, gives the page keyboard focus. For one second after leaving fullscreen, a resize or a focus event focuses the page again. The fullscreen animation clears the first responder when it finishes, and without that second focus the arrow keys only beep until the window is clicked.
 
 Which folder appears is decided from the launch Apple Event. There is no timer. macOS starts an app with one of two events:
 
 - `oapp` (open application). Nothing is being opened. List `~/Pictures`, or the home directory if Pictures does not exist.
-- `odoc` (open documents). Finder, or `open`, is handing over files. tao's `Event::Opened` carries the URLs. Show the first file, with its parent loaded in the browser. Extra URLs in that event are ignored.
+- `odoc` (open documents). Finder, or `open`, is handing over files. tao's `Event::Opened` carries the URLs. Show the first file immediately. Do not flash the thumbnail grid first. List its parent in the background so Next and Previous still work. Extra URLs in that event are ignored.
 
 `platform/launch.rs` reads the current event once, on the first event-loop callback, from `NSAppleEventManager`. The class is `aevt` (`0x61657674`). The id is `oapp` (`0x6f617070`) or `odoc` (`0x6f646f63`).
 
@@ -41,8 +45,12 @@ A path is opened whether or not it contains `.vscode`. Do not special-case edito
   2. Other child directories whose names do not start with `.`, sorted by name, case-insensitive.
   3. Child files with a supported suffix, sorted by name, case-insensitive. A file whose name starts with `.` is included when the suffix matches.
 - The label is the path stem (no suffix), elided in the middle to the cell width. The parent entry is labelled with the parent directory's name, not `..`.
-- Directories use `folder.png`. Videos use `video.png`. Images show `loading.png` at 20% opacity until the decode finishes, then the thumbnail at full opacity.
-- One highlight. Arrow keys move it by one cell or by one row of eight, clamped to the list, and scroll it into view. Return or a click opens it.
+- Directories use `folder.png`, a flat blue folder in the macOS style.
+- Images show `loading.png` at 20% opacity until the decode finishes, then the thumbnail at full opacity. The thumbnail is the first composited frame. The grid does not animate.
+- A GIF or WebP with more than one frame gets a small play badge on that thumbnail. A single-frame GIF or WebP does not.
+- Videos show `loading.png` until a frame from about 15% of the way through the movie is ready, then that frame with the same play badge. If the frame cannot be read, the cell shows `video.png` and no extra badge.
+- The play badge is a 20 px dark circle in the bottom-left of the thumbnail, with a white triangle.
+- One highlight. Arrow keys move it by one cell or by one row of eight, clamped to the list, and scroll it into view. Return or a click opens it. The grid stays up until that file has loaded. Opening a file from Finder, `open`, or a path does not wait on the grid: the viewer is shown at once.
 - Opening a directory remembers the highlight index and scroll offset for the folder being left, then lists the new folder. Returning restores both after the grid has been committed. If the index is now out of range, clamp it.
 - The window title is the current directory's stem.
 - Leaving a folder discards in-flight thumbnail results. Decode work must not touch UI state; the UI thread applies a finished bitmap.
@@ -58,7 +66,7 @@ Supported files:
 
 Suffix checks are case-insensitive.
 
-A GIF or WebP with more than one frame is an animation and plays in the viewer. Anything else is a still image. The grid does not animate: a thumbnail is the first composited frame.
+A GIF or WebP with more than one frame is an animation and plays in the viewer. Anything else is a still image. The grid does not play the animation. Its thumbnail is the first composited frame, with the play badge when there is more than one frame.
 
 Decode GIF frames with `image::codecs::gif::GifDecoder`. Decode animated WebP with `image-webp`, because `image`'s WebP path only returns the first frame. Composite every frame onto the full canvas (the GIF logical screen, or the WebP VP8X canvas) before display or editing.
 
@@ -88,7 +96,9 @@ If the composited frames of one document would exceed 256 MiB, or a transform wo
 
 An edited animation is saved as an animated GIF. The pure-Rust WebP encoder writes a single frame, so an edited animated WebP is saved as GIF too. The original file is not rewritten, and an unedited WebP still plays as WebP. A still image is saved as PNG.
 
-Images are fitted to the window, aspect preserved. The scroll wheel multiplies the zoom by 1.05 or divides by 1.05, keeping the image point under the pointer fixed. Primary-button drag pans. A resize while still fitted only refits. A resize after the user has zoomed keeps the image point that was in the centre of the viewport in the centre.
+Images are fitted to the window, aspect preserved. The scroll wheel zooms continuously. About 50 pixels of movement, one typical notch, multiplies or divides the zoom by 1.05. A smaller movement is a fraction of that step. The image point under the pointer stays fixed. Primary-button drag pans. A resize while still fitted only refits. A resize after the user has zoomed keeps the image point that was in the centre of the viewport in the centre.
+
+The picture already on screen stays until the next one has finished loading. Two image layers are always mounted. The hidden layer loads the next frame, and only then is it shown. An empty layer uses a 1×1 transparent image so the previous picture is not cleared early.
 
 Control-drag (the Control key, not Command) draws a selection in image pixels. The overlay is `rgb(30, 144, 255)` at 50% alpha with a solid blue border, clipped to the image. A primary click without Control clears it. Zoom to Rect frames that rectangle, aspect preserved, and leaves fitted mode. Crop to Rect commits the clamped pixel rectangle and clears the selection. Reset Zoom fits the image again. Any committed edit also returns to fit and clears the selection.
 
@@ -109,7 +119,9 @@ Image Information lists Format, Format Description, Width, Height, and Mode. Des
 
 Adjust Image is a dialog with Colour, Contrast, and Brightness sliders. Each runs from 0 to 20 and is divided by 10, so 10 is factor 1.0. Movement previews without touching the undo stack. OK commits the three adjustments as one undo step. Cancel restores the pre-dialog image. Escape cancels.
 
-Videos loop. Space pauses and resumes. Shift-Left and Shift-Right seek by 5 seconds. Shift-Up and Shift-Down change volume by 0.1, clamped to 0.0–1.0, and unmute. Shift-M toggles mute. Volume starts at 1.0. A scrubber is inset 100 px from the left, right, and bottom of the view, 4 px tall, Dodger Blue at 50% alpha, with a white position mark. Pointer movement and skip commands show it and hide it 500 ms after the pointer stops. A click seeks to that fraction of the duration. Returning to the browser or opening another file stops playback.
+Videos loop. Space pauses and resumes. Shift-Left and Shift-Right seek by 5 seconds. Shift-Up and Shift-Down change volume by 0.1, clamped to 0.0–1.0, and unmute. Shift-M toggles mute. Volume starts at 1.0. A scrubber is inset 100 px from the left, right, and bottom of the view, 4 px tall. It is drawn over the video. The track is a rounded capsule, white at about 38% alpha, with a fine dark edge. The played portion is solid Dodger Blue (`rgb(30, 144, 255)`). The position mark is a 12 px white circle centred on the current time. Pointer movement and skip commands show it and hide it 500 ms after the pointer stops. A click seeks to that fraction of the duration. Returning to the browser or opening another file stops playback.
+
+The video on screen stays visible when it is paused, skipped, or seeked, and while the next video is still loading. The next video replaces it when that element has loaded its first frame. Still images stay hidden for as long as a video is showing, so a pause does not reveal the last picture.
 
 Image commands are enabled for an open image, including an animation. Video commands other than Play / Pause are enabled only for a video. Play / Pause is enabled for a video or an animated image. File, Show, Image, and Video menus are enabled only while a file is open. A disabled command does not receive its shortcut, which is what keeps Shift-Left and Shift-Right from meaning both "colour" and "seek" at once.
 
@@ -121,6 +133,7 @@ These are physical Mac keys. Command is the modifier Dioxus calls Meta. Option i
 | --- | --- | --- |
 | Save | Command-S | Image is dirty |
 | Return to browser | Up | A file is open |
+| Full screen | Return | A file is open |
 | Next / Previous | Right / Left | A file is open |
 | Adjust Image | Control-A | Image |
 | Zoom to Rect | Control-Z | Image or video, and a selection exists |
@@ -155,7 +168,11 @@ Colour, contrast, and brightness keyboard steps use factors 1.1 and 0.9. Super R
 | Volume step | 0.1 |
 | Scrubber inset | 100 px |
 | Scrubber thickness | 4 px |
+| Scrubber handle | 12 px white circle |
 | Scrubber hide delay | 500 ms |
+| Video thumbnail time | 15% of the duration |
+| Fullscreen double-click guard | 400 ms after the file opened |
+| Wheel step | 1.05 per 50 pixels of movement |
 | Animation size limit | 256 MiB of composited frames for one document |
 | GIF short delay | Stored 0 or 1 centiseconds displays as 100 ms |
 | Slider domain | 0–20, divided by 10 |
@@ -194,7 +211,8 @@ Colour, contrast, and brightness keyboard steps use factors 1.1 and 0.9. Super R
 | Kernels and enhancers | This crate, as specified below |
 | Denoise | This crate, non-local means in CIELAB |
 | Super-resolution | ONNX files inferred with `tract-onnx`. Isolated in one module |
-| Video | A `<video>` element. The file is served by the custom protocol with HTTP range support |
+| Video playback | A `<video>` element. The file is served by the custom protocol with HTTP range support |
+| Video thumbnails | AVFoundation, through `objc2-av-foundation` |
 | Logging | `tracing` into one size-rotated file via `file-rotate` |
 | Blocking work | `spawn_blocking` on the tokio runtime dioxus-desktop already starts |
 
@@ -218,7 +236,7 @@ assets/
         fsrcnn_x2.onnx   may be absent until conversion; the app still builds
         fsrcnn_x3.onnx
         fsrcnn_x4.onnx
-        README.md        tensor names, layout, and value range from conversion
+        README.md        YCrCb contract for the FSRCNN graphs
 scripts/
     make-app-icon.sh
     install-app.sh
@@ -232,13 +250,14 @@ src/
     viewport.rs
     protocol.rs
     resources.rs
+    wake.rs
+    logging.rs
     browser/
         mod.rs
         thumbnail.rs
+        video_frame.rs
     viewer/
         mod.rs
-        stage.rs
-        video.rs
     transforms/
         mod.rs
         kernels.rs
@@ -248,16 +267,14 @@ src/
     transitions/
         mod.rs
     dialogs/
-        adjust.rs
-        info.rs
+        mod.rs
     platform/
         menu.rs
         launch.rs
-tests/
-    fixtures/
+        mod.rs
 ```
 
-`platform/` is the only module that names macOS windowing types. Transforms do not import Dioxus.
+`platform/` names the window and the Apple Event. Video thumbnails call AVFoundation from `browser/video_frame.rs`. Transforms do not import Dioxus.
 
 ```toml
 [package]
@@ -276,9 +293,19 @@ fast_image_resize = "5"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 file-rotate = "0.8"
+chrono = "0.4"
+objc2 = "0.6"
+dispatch2 = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
+tract-onnx = "0.22"
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVAsset", "AVAssetImageGenerator", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSURL", "NSError"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["CMTime"] }
 ```
 
-Add `tract-onnx` when the super-resolution module is written. Do not add a `[package.metadata.bundle]` table and do not add a `Dioxus.toml`. Nothing reads them.
+`tract-onnx` is the inference library. The AVFoundation crates read one frame for a video thumbnail. Do not add a `[package.metadata.bundle]` table and do not add a `Dioxus.toml`. Nothing reads them. The application does not call ffmpeg. A test may use it, when it is installed, to build a sample clip.
 
 ### Launch
 
@@ -375,7 +402,7 @@ flowchart LR
     Protocol --> Browser
 ```
 
-Rust holds the frame list behind `Arc`. A generation counter increases when that list changes. The stage requests `app://image/current?g={generation}&f={frame}`. Zoom and pan are CSS transforms, so a new frame does not reset the view and the wheel does not re-encode.
+Rust holds the frame list behind `Arc`. A generation counter increases when that list changes. The stage requests `app://image/g/{generation}/f/{frame}/p/{preview}`. Zoom and pan are CSS transforms, so a new frame does not reset the view and the wheel does not re-encode.
 
 ### State
 
@@ -445,7 +472,7 @@ enum Command {
     Quit,
     ToggleFullscreen,
     Transform { id: TransformId, params: Params },
-    Preview { id: TransformId, params: Params },
+    Preview { colour: f32, contrast: f32, brightness: f32 },
     CommitPreview,
     CancelPreview,
     Undo,
@@ -464,7 +491,7 @@ enum Command {
 
 `Command::available` is the enablement table in section 1. Menus and the key handler both call it. A new transform does not add a variant. A new transition does not either: `Next`, `Previous`, and `Open` ask the transition registry before swapping the document.
 
-`busy` is true while a blocking transform runs. Further transform commands are refused, and the stage dims, until it finishes.
+`busy` is true while a blocking transform runs. Further transform commands are refused until it finishes. The stage does not dim.
 
 ## 6. Transforms
 
@@ -513,7 +540,7 @@ The adjust dialog is not another row. It previews colour, then contrast, then br
 
 ### Channels
 
-Convolution and enhancers read and write R, G, and B. Alpha is copied unchanged. Denoise and super-resolution run on RGB and reattach alpha afterwards. Super-resolution resamples alpha with nearest neighbour to the new size.
+Convolution and enhancers read and write R, G, and B. Alpha is copied unchanged. Denoise converts RGB to CIELAB and reattaches the original alpha afterwards. Super-resolution runs on the Y channel of YCrCb. Cr and Cb are resized, and alpha is resampled with nearest neighbour, as described below.
 
 Samples are `u8`. Intermediate sums are floating point. The stored result is rounded to the nearest integer and clamped to 0–255.
 
@@ -578,19 +605,24 @@ Run on `spawn_blocking`.
 
 ### Super-resolution
 
-The weights are the FSRCNN graphs published at `https://github.com/Saafke/FSRCNN_Tensorflow` (`models/FSRCNN_x2.pb`, `FSRCNN_x3.pb`, `FSRCNN_x4.pb`). Convert each once and commit the ONNX file. The application does not convert at runtime and does not contain the `.pb` files.
+The weights are the FSRCNN graphs published at `https://github.com/Saafke/FSRCNN_Tensorflow` (`models/FSRCNN_x2.pb`, `FSRCNN_x3.pb`, `FSRCNN_x4.pb`). Convert each once and commit the ONNX file. The application does not convert at runtime and does not load the `.pb` files.
 
 ```text
 python -m tf2onnx.convert --graphdef FSRCNN_x4.pb --output fsrcnn_x4.onnx --opset 13
 ```
 
-If the tool requires names, print graph nodes whose op is `Placeholder` or that have no inputs, and pass `--inputs` and `--outputs`. Record in `assets/models/README.md` the tensor names, NCHW versus NHWC, BGR versus RGB, and whether samples are 0–255 or 0–1.
+Each graph is the OpenCV FSRCNN path: one luminance plane, not a colour image. The contract is recorded in `assets/models/README.md`.
 
-The OpenCV call this replaces is `readModel`, `setModel("fsrcnn", scale)`, `upsample` on a BGR `u8` image. For FSRCNN, that path builds the blob with scale factor 1.0 and no channel swap, runs the graph, and writes a BGR `u8` image of size `scale` times the input. The Rust loader follows the README written during conversion so the numeric result agrees with that path within a small tolerance.
+- Input `y`: `float32`, NCHW `[1, 1, height, width]`. The value is the Y channel of YCrCb, divided by 255, so the range is 0–1. `Y = 0.299 R + 0.587 G + 0.114 B`.
+- Output `output`: `float32`, NCHW `[1, 1, height × scale, width × scale]`, the same Y channel in 0–1. Multiply by 255 before converting back.
+- Cr and Cb use `Cr = (R − Y) × 0.713 + 128` and `Cb = (B − Y) × 0.564 + 128`. They are resized with bilinear interpolation (sample centres, edges clamped) and combined with the network output: `R = Y + 1.403 (Cr − 128)`, `G = Y − 0.714 (Cr − 128) − 0.344 (Cb − 128)`, `B = Y + 1.773 (Cb − 128)`.
+- Alpha is resampled with nearest neighbour. A flat colour stays within 24 levels of the source.
 
-`apply` accepts `Params::Scale` of 2, 3, or 4 and loads `fsrcnn_x{scale}.onnx`. Any other scale, or a missing file, returns `TransformError`. The UI logs it and leaves the image unchanged. The menu item passes 4. A later item that passes 2 or 3 does not need a new pipeline.
+Bit-identical output with OpenCV is not a goal. The loader follows these formulas.
 
-Run on `spawn_blocking`.
+`apply` accepts `Params::Scale` of 2, 3, or 4 and loads `fsrcnn_x{scale}.onnx`. Any other scale, or a missing file, returns `TransformError`. The UI logs it and leaves the image unchanged. The menu item passes 4. A later item that passes 2 or 3 does not need a new pipeline. The model is prepared again for each image size.
+
+Run on `spawn_blocking`. The tract linear-algebra probe can panic inside a restricted sandbox; run the FSRCNN test outside it.
 
 ## 7. Transitions
 
@@ -620,7 +652,7 @@ else:
 
 `applies` is false for `Cut`, for any video, and when the current mode is the browser. The registry ships `Cut` only, and `AppState.transition` starts as `cut`. There is no preferences file. A later setting writes that field.
 
-A later crossfade is two stacked `<img>` elements and a CSS opacity animation. It does not re-decode. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol. Video and folder changes stay hard cuts.
+A later crossfade is a CSS opacity animation between the two image layers that are already mounted. It does not re-decode. Those two layers already hold the previous picture until the next one has loaded; that hold is not a transition. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol. Video and folder changes stay hard cuts.
 
 While a transition runs, Next and Previous are ignored.
 
@@ -628,9 +660,9 @@ While a transition runs, Next and Previous are ignored.
 
 The grid is CSS. Restoration of highlight and scroll runs in an effect after the browser commits, not in the same turn that builds the list.
 
-Each thumbnail job captures a `u64` folder generation. Opening another folder increments it, and a stale result is dropped. Decode uses `spawn_blocking` and `fast_image_resize`.
+Each thumbnail job captures a `u64` folder generation. Opening another folder increments it, and a stale result is dropped. Image decode uses a worker pool and `fast_image_resize`. Video frames use the same pool and AVFoundation. The requested time is 15% of the duration. The preferred track transform is applied, so a portrait movie stays upright. The generator's maximum size is the thumbnail pixel size. The seek tolerance is 5% of the duration, clamped to 0.25–2 seconds, so the frame stays near that time and can still use a nearby keyframe. An unknown duration uses time 0 and a tolerance of 0.5 seconds. The frame is letterboxed into the same square canvas as an image thumbnail. A failed video frame is logged, and the cell falls back to `video.png`.
 
-The stage is a viewport `div` and an `<img src="app://image/current?g={gen}&f={frame}">` with `object-fit: contain`. A desktop timer advances `frame_index` when the current frame's display delay elapses, wrapping according to `loop_count`. Pausing stops the timer. The transform stays on the viewport, so the next frame does not jump back to fit.
+The stage is a viewport `div` and two always-mounted `<img>` elements. The shown layer is the one whose frame has loaded. The address is `app://image/g/{generation}/f/{frame}/p/{preview}`. A desktop timer advances `frame_index` when the current frame's display delay elapses, wrapping according to `loop_count`. Pausing stops the timer. The transform stays on the image, so the next frame does not jump back to fit.
 
 ```rust
 struct Viewport {
@@ -651,13 +683,15 @@ Save failure is logged and shown on the stage. Success points `clean` at the cur
 
 ## 9. Video
 
-`VideoDocument` stores the path, duration, position, paused flag, volume, and mute flag. The shell renders `<video loop>` with no native controls. Bytes come from `app://video/{token}`.
+`VideoDocument` stores the path, duration, position, paused flag, volume, mute flag, and a token. The shell renders two `<video loop>` elements with no native controls. The one on screen has the id `player`. The hidden one keeps the previous or the next movie. Bytes come from `app://video/{token}`. A hidden video is paused and muted. Time updates from a video that is no longer `player` are ignored, so a movie that has just been replaced cannot overwrite the position.
+
+The movie on screen stays up until the next one reports `loadeddata`. Pause, seek, mute, and volume do not hide it, and they do not uncover the still images underneath.
 
 That route honours `Range`. `Range: bytes=start-end` returns 206 with `Content-Range` and `Accept-Ranges: bytes`. A request without a range returns 200 and the whole file. Seeking does not work without this.
 
 `play`, `pause`, `currentTime`, `volume`, and `muted` are set through `dioxus::document::eval`, because they are DOM properties. `timeupdate` and `loadedmetadata` write position and duration back into the document.
 
-The scrubber is Dioxus markup using the geometry in section 1. A click sends `Command::Seek { fraction }`.
+The scrubber is Dioxus markup using the geometry in section 1. It sits above the video. A click sends `Command::Seek { fraction }`. The hit target is the inset bar, with a few pixels of slack vertically, not the 4 px of paint alone.
 
 ## 10. Protocol
 
@@ -665,11 +699,14 @@ Register the asynchronous protocol named `app`.
 
 | URL | Body |
 | --- | --- |
-| `app://thumb/{folder_gen}/{index}` | Thumbnail for that generation |
-| `app://image/current?g={gen}&f={frame}` | Encoded frame, or the adjust preview when one is active |
+| `app://thumb/{folder_gen}/{index}?s={px}` | Thumbnail PNG for that generation and pixel size |
+| `app://image/g/{generation}/f/{frame}/p/{preview}` | Encoded frame, or the adjust preview when the preview ticket is non-zero |
+| `app://icon/{name}` | `folder.png`, `loading.png`, or `video.png` |
 | `app://video/{token}` | File bytes, with ranges |
 
-The handler clones an `Arc` and encodes without holding the Dioxus lock across the encode. Encoded stills are cached by generation. A still with any alpha sample below 255 is PNG. Anything else is JPEG quality 90. Preview frames may use JPEG quality 80. The committed image uses the normal rule.
+The image address is a path, not a query string. The handler joins a non-local host onto the path, so `app://image/...` is read as `/image/...`. Encoded frames are cached by generation, frame, and preview ticket. If that exact key is already cached, those bytes are returned even after the generation has moved on, which is what keeps the picture on screen while the next one loads. Otherwise a frame is encoded only when the store's generation and preview ticket still match. The previous generation is retained for that cache. Responses are not marked `Cache-Control: no-store`.
+
+The handler clones an `Arc` and encodes without holding the UI lock across the encode. A still with any alpha sample below 255 is PNG. Anything else is JPEG quality 90. Preview frames may use JPEG quality 80. The committed image uses the normal rule.
 
 ## 11. Menus
 
@@ -978,25 +1015,29 @@ Core tests do not open a window. They implement the formulas in this document ag
 - Undo: commit, cap at 16, reject preview. Save clears dirty. Undo back onto the saved list clears it again. Undo past that list sets it again. Save filename uses the local-time pattern in section 1, with `.png` for a still and `.gif` for an animation.
 - Startup choice: `oapp` selects the startup folder, `odoc` selects the document, a command-line path is used only when no document event arrived, and an `Opened` event cancels a deferred startup-folder load.
 - Animation: background and previous disposal, a GIF delay of 0 or 1 centisecond and a WebP duration of 0 all display as 100 ms, loop once / forever / N, and a committed edit changes every frame. A document over 256 MiB stays a still.
-- Commands: availability for browser, image, video, selection, and zoom.
+- Commands: availability for browser, image, video, selection, and zoom. Return toggles fullscreen while a file is open, and does not while browsing.
 - Kernels, enhancers, unsharp mask, and auto contrast: expected bytes computed from the formulas on a fixed 8×8 RGB image.
 - Denoise: a small fixture with a recorded output, so later edits do not drift.
-- FSRCNN: once `assets/models/README.md` and the ONNX files exist, upscale a small RGB image and compare within the tolerance written in that README. Skip the test when the files are absent.
-- Navigator: `Cut` swaps immediately. A test double with `applies == true` records `Transitioning` and ignores a second Next while it runs.
+- FSRCNN: upscale an 8×8 colour image by 4. The corners keep their alpha, and a flat colour stays within 24 levels. If the model file is missing, the error says so.
+- Video thumbnail time: 15% of a real duration, and the seek window stays near that point. A further test builds a short clip with ffmpeg, when ffmpeg is installed, and checks that the grabbed frame is the one from 15% of the way through, right way up. If ffmpeg is not installed, that test passes without checking a frame. The application itself does not call ffmpeg.
+- Navigator: `Cut` swaps immediately. A test double with `applies == true` records `Transitioning` and ignores a second Next while it runs. Opening a file path shows the viewer before the folder listing arrives. A shown video stays up across pause and across the load of the next video. The visible picture stays until the next one has loaded.
 
 Manual pass on `/Applications/Image Viewer.app` after `scripts/install-app.sh`:
 
-- Launch with no arguments opens Pictures and does not wait. Double-click a JPEG in Finder opens that file without first showing Pictures. `open -a "Image Viewer" photo.png` on an already running instance opens that file.
-- An animated GIF and an animated WebP play. Space pauses them. The thumbnail is the first frame. Editing one and saving writes a `.gif`, and the star leaves the title.
+- Launch with no arguments opens Pictures and does not wait. Double-click a JPEG in Finder opens that file, not the folder grid. `open -a "Image Viewer" photo.png` on an already running instance opens that file.
+- An animated GIF and an animated WebP play. Space pauses them. The thumbnail is the first frame, with a play badge. A still picture has no badge. Editing an animation and saving writes a `.gif`, and the star leaves the title.
+- A movie thumbnail is a frame from about 15% of the way through, with the same play badge. If the frame cannot be read, the cell shows the video icon.
 - Browse into a folder and back. Highlight and scroll survive.
 - Zoom, pan, Control-drag, zoom-to-rect, crop, undo, save. Confirm the file name. The star is absent after a successful save and returns if the saved image is undone past.
 - Each Image menu item, then the adjust dialog's OK and Cancel.
-- Play, pause, skip, seek, volume, and mute on an MP4 and a MOV. The scrubber hides. Range seeks land in the right part of the file.
-- Resize, fullscreen, Escape.
+- Play, pause, skip, seek, volume, and mute on an MP4 and a MOV. Pausing keeps the movie on screen. Moving to the next movie does not flash the previous picture. The scrubber is drawn over the video and hides after the pointer stops. Range seeks land in the right part of the file.
+- Resize. Double-click or Return toggles fullscreen, and Return again returns to the window. After leaving fullscreen, Up still returns to the grid without a click in the window. Escape quits.
 - `codesign -dv --verbose=4 "/Applications/Image Viewer.app"` shows identifier `local.image-viewer` and an Apple identity when one was in the keychain, otherwise an ad-hoc signature.
 - From a temporary hook in that signed build, `fetch("https://example.com")` inside the web view is not blocked. Remove the hook afterwards.
 
 ## 14. Implementation order
+
+This is the order the application was built in. The behaviour in section 1 is the finished application, including video-frame thumbnails, the play badge, and Return for fullscreen.
 
 1. Crate, window, logging, empty browser, quit on Escape, both scripts, and a signed app in `/Applications`.
 2. Catalog and grid with the bundled icons, keyboard highlight, and folder memory.
@@ -1016,7 +1057,9 @@ Each step leaves an app that `scripts/install-app.sh` can install. A transform a
 | Product name | Image Viewer. Executable `image-viewer`. Bundle identifier `local.image-viewer`. |
 | Install location | `/Applications/Image Viewer.app`, replaced by `scripts/install-app.sh`. |
 | Signing | Developer ID Application, else Apple Development, else ad-hoc. Always `--identifier local.image-viewer`. No sandbox, no entitlements, no hardened runtime. |
-| Launch | Apple Event `oapp` or `odoc`. Next main-queue turn only if the event can no longer be read. No timer. |
+| Launch | Apple Event `oapp` or `odoc`. Next main-queue turn only if the event can no longer be read. No timer. A handed-over file opens in the viewer at once. |
+| Full screen | Double-click or Return while a file is open. No menu item. The opening double-click is ignored for 400 ms. |
+| Thumbnails | First frame for a picture. A frame at 15% for a movie, read with AVFoundation. A play badge on movies and on animations. |
 | Animation | GIF and animated WebP play from composited frames. Edits apply to every frame. A saved animation is an animated GIF. |
 | Working pixels | `Arc<[AnimFrame]>` of `RgbaImage`. Alpha is preserved and excluded from filters. |
 | Undo | Cap 16 frame lists. Save clears dirty by remembering that list. |
