@@ -98,7 +98,7 @@ pub fn store_thumb(generation: u64, index: usize, px: u32, result: Result<Vec<u8
 }
 
 pub fn handle(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
-    let path = request.uri().path();
+    let path = request_path(request.uri());
     let query = request.uri().query().unwrap_or("");
     if let Some(name) = path.strip_prefix("/icon/") {
         return icon_response(name);
@@ -113,6 +113,16 @@ pub fn handle(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
         return video_response(token, request.headers().get(http::header::RANGE));
     }
     empty(404)
+}
+
+fn request_path(uri: &http::Uri) -> String {
+    let path = uri.path();
+    match uri.host() {
+        Some(host) if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") => {
+            format!("/{host}{path}")
+        }
+        _ => path.to_string(),
+    }
 }
 
 fn icon_response(name: &str) -> Response<Cow<'static, [u8]>> {
@@ -327,6 +337,17 @@ fn empty(status: u16) -> Response<Cow<'static, [u8]>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_scheme_urls_keep_the_first_segment() {
+        let icon: http::Uri = "app://icon/folder.png".parse().unwrap_or_else(|_| http::Uri::from_static("/"));
+        assert_eq!(request_path(&icon), "/icon/folder.png");
+        let thumb: http::Uri = "app://thumb/3/4?s=128".parse().unwrap_or_else(|_| http::Uri::from_static("/"));
+        assert_eq!(request_path(&thumb), "/thumb/3/4");
+        assert_eq!(thumb.query(), Some("s=128"));
+        let rooted: http::Uri = "app://localhost/image/current".parse().unwrap_or_else(|_| http::Uri::from_static("/"));
+        assert_eq!(request_path(&rooted), "/image/current");
+    }
 
     #[test]
     fn ranges_cover_a_suffix_and_an_open_end() {

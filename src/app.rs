@@ -18,9 +18,9 @@ html, body { margin: 0; height: 100%; background: #111; }
 .browser { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); align-content: start; overflow: auto; height: 100%; }
 .cell { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 8px; border: 0; background: transparent; color: inherit; text-align: center; min-width: 0; }
 .cell.selected { background: rgba(30, 144, 255, 0.5); }
-.thumb-box { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.thumb { width: 100%; height: 100%; object-fit: contain; }
-.thumb.loading { width: 40%; height: 40%; opacity: 0.2; }
+.thumb-box { width: 100%; aspect-ratio: 1; position: relative; overflow: hidden; }
+.thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.thumb.loading { width: 40%; height: 40%; margin: auto; opacity: 0.2; }
 .thumb-error { font-size: 11px; padding: 4px; }
 .label { white-space: nowrap; overflow: hidden; }
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: light-dark(#ececec, #101010); }
