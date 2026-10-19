@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.2.1"
+version = "1.2.2"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -658,7 +658,7 @@ else:
 
 `applies` is false for `Cut`, for any video, and when the current mode is the browser. The registry ships `Cut` and `Ease`. `AppState.transition` starts as `ease`. Show → Slide between Images switches that field between `ease` and `cut`. There is no preferences file.
 
-`Ease` slides the two mounted image layers. Next brings the incoming picture in from the right and moves the outgoing picture off to the left. Previous does the opposite. The motion is 400ms on `cubic-bezier(0.22, 1, 0.36, 1)`. It does not re-decode. The slide starts when the incoming layer has loaded, so a preloaded neighbour begins at once. The outgoing document stays current until the animation ends, then the pending document is installed and served from `app://near/{token}/f/{frame}`, the address the hidden layer already used. Opening a file, changing folder, and any step that involves a video stay hard cuts. The same two layers still hold the previous picture until the next one has loaded when the step is a cut; that hold is not a transition. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol.
+`Ease` slides the two mounted image layers. Next brings the incoming picture in from the right and moves the outgoing picture off to the left. Previous does the opposite. The motion is 400ms on `cubic-bezier(0.22, 1, 0.36, 1)`. It does not re-decode. The slide starts when the incoming layer has loaded, so a preloaded neighbour begins at once. Going back reuses the picture still held on the hidden layer, and that slide starts immediately because the layer already has its address. The outgoing document stays current until the animation ends, then the pending document is installed and served from `app://near/{token}/f/{frame}`, the address the hidden layer already used. Opening a file, changing folder, and any step that involves a video stay hard cuts. The same two layers still hold the previous picture until the next one has loaded when the step is a cut; that hold is not a transition. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol.
 
 While a picture is on screen, the previous and next image files in the folder order are decoded in the background and requested by hidden images, so a step does not wait on disk. A neighbour that is a video is left until it is opened. Stepping onto a picture that has already been decoded reuses that document. Going back reuses the picture just left when it has no unsaved edit.
 
@@ -883,7 +883,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.2.1` (or older `…@1.2.1`).
+# cargo pkgid is `path+file:///…/image-viewer#1.2.2` (or older `…@1.2.2`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"

@@ -460,7 +460,9 @@ impl AppState {
             let visible_stale = self.desired_frame().is_some_and(|desired| {
                 (visible.url.is_empty() || visible.url == desired.url) && visible != &desired
             });
-            return hidden != &incoming || visible_stale;
+            let ready = matches!(self.phase, Phase::Transitioning { started: None, .. })
+                && hidden.url == incoming.url;
+            return hidden != &incoming || visible_stale || ready;
         }
         let Some(desired) = self.desired_frame() else {
             return false;
@@ -576,6 +578,13 @@ impl AppState {
         let Some(incoming) = self.incoming_layer() else {
             return;
         };
+        let hidden_url = if self.show_front {
+            self.back.url.clone()
+        } else {
+            self.front.url.clone()
+        };
+        let ready = hidden_url == incoming.url
+            && matches!(self.phase, Phase::Transitioning { started: None, .. });
         let update_visible = self.desired_frame().is_some_and(|desired| {
             let visible = if self.show_front {
                 &self.front
@@ -597,6 +606,9 @@ impl AppState {
             self.back = incoming;
         } else {
             self.front = incoming;
+        }
+        if ready {
+            self.begin_ease(Instant::now());
         }
     }
 
@@ -2727,6 +2739,42 @@ mod tests {
         assert!(state.open_media(video_doc("/pictures/a.mp4", 3), true, &registry));
         assert!(matches!(state.phase, Phase::Idle));
         assert!(state.video().is_some());
+    }
+
+    #[test]
+    fn reversing_starts_when_the_picture_is_already_on_the_hidden_layer() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (800.0, 600.0);
+        state.folder = folder();
+        state.document = Some(image_doc("/pictures/b.png"));
+        state.show_front = true;
+        state.front.url = "app://near/4/f/0".into();
+        state.front.size = Some((2, 2));
+        state.back.url = "app://near/7/f/0".into();
+        state.back.size = Some((2, 2));
+        state.blend_token = Some(7);
+        state.nav_delta = -1;
+        let registry = TransitionRegistry::builtin();
+        assert!(state.open_media(image_doc("/pictures/a.png"), true, &registry));
+        assert!(matches!(
+            state.phase,
+            Phase::Transitioning {
+                slide: -1,
+                started: None,
+                ..
+            }
+        ));
+        assert!(state.display_needs_sync());
+        state.sync_display();
+        assert!(state.blending());
+        assert!(matches!(
+            state.phase,
+            Phase::Transitioning {
+                started: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]
