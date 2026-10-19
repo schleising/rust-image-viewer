@@ -10,7 +10,7 @@ pub fn init() {
         Some(writer) => {
             tracing_subscriber::fmt()
                 .with_ansi(false)
-                .with_max_level(tracing::Level::INFO)
+                .with_max_level(tracing::Level::WARN)
                 .with_target(false)
                 .with_writer(writer)
                 .init();
@@ -18,7 +18,7 @@ pub fn init() {
         None => {
             tracing_subscriber::fmt()
                 .with_ansi(false)
-                .with_max_level(tracing::Level::INFO)
+                .with_max_level(tracing::Level::WARN)
                 .with_target(false)
                 .with_writer(io::stderr)
                 .init();

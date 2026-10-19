@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.2.6"
+version = "1.2.7"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -368,7 +368,7 @@ One log, in the place Console.app already looks:
 ~/Library/Logs/ImageViewer/ImageViewer.log
 ```
 
-Create the directory if it is missing. `file-rotate` rotates that file when it passes 1 MiB, keeps four older files (`ImageViewer.log.1` through `ImageViewer.log.4`), and deletes anything beyond those. A new launch appends. It does not create another file. The `tracing-subscriber` fmt layer writes plain text (no ANSI colour) at info, with a timestamp, the level, and the message.
+Create the directory if it is missing. `file-rotate` rotates that file when it passes 1 MiB, keeps four older files (`ImageViewer.log.1` through `ImageViewer.log.4`), and deletes anything beyond those. A new launch appends. It does not create another file. The `tracing-subscriber` fmt layer writes plain text (no ANSI colour) at warning, with a timestamp, the level, and the message.
 
 Decode, transform, and save failures are logged and shown in the window. A corrupt file is a cell or stage message, not a panic. Crossing the animation size limit is logged.
 
@@ -883,7 +883,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.2.6` (or older `…@1.2.6`).
+# cargo pkgid is `path+file:///…/image-viewer#1.2.7` (or older `…@1.2.7`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
