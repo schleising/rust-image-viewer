@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "image-viewer"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "block2",
  "chrono",

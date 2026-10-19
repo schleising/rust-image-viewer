@@ -721,10 +721,18 @@ impl AppState {
     }
 
     pub fn finish_ease(&mut self) -> Effect {
+        if self.snap_ease() {
+            self.after_show()
+        } else {
+            Effect::None
+        }
+    }
+
+    fn snap_ease(&mut self) -> bool {
         let Some(document) = self.pending_document.take() else {
             self.clear_blend();
             self.phase = Phase::Idle;
-            return Effect::None;
+            return false;
         };
         let token = self.blend_token;
         let url = self.incoming.as_ref().map(|item| item.url.clone());
@@ -740,7 +748,7 @@ impl AppState {
             }
         }
         self.touch_preload();
-        self.after_show()
+        true
     }
 
     fn desired_video_layer(&self) -> Option<FrameLayer> {
@@ -1186,7 +1194,7 @@ impl AppState {
 
     fn step_media(&mut self, delta: isize) -> Effect {
         if matches!(self.phase, Phase::Transitioning { .. }) {
-            return Effect::None;
+            let _ = self.snap_ease();
         }
         let Some(path) = self.media_step(delta) else {
             return Effect::None;
@@ -2726,6 +2734,69 @@ mod tests {
             state.document.as_ref().map(Document::path),
             Some(Path::new("/pictures/a.png"))
         );
+    }
+
+    #[test]
+    fn a_key_during_a_slide_snaps_and_takes_the_new_step() {
+        let registry = TransitionRegistry::builtin();
+        let mut forward = three_pictures();
+        assert!(forward.open_media(image_doc("/pictures/b.png"), true, &registry));
+        assert!(matches!(forward.phase, Phase::Transitioning { .. }));
+        assert!(Command::Next.available(&forward.availability()));
+        let next = forward.dispatch(Command::Next, Instant::now());
+        assert_eq!(
+            forward.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/b.png"))
+        );
+        assert!(matches!(forward.phase, Phase::Idle));
+        assert!(matches!(
+            next,
+            Effect::LoadFile { ref path, .. } if path.ends_with("c.png")
+        ));
+
+        let mut backward = three_pictures();
+        assert!(backward.open_media(image_doc("/pictures/b.png"), true, &registry));
+        let previous = backward.dispatch(Command::Previous, Instant::now());
+        assert_eq!(
+            backward.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/b.png"))
+        );
+        let token = match &previous {
+            Effect::UsePrepared { token, .. } => *token,
+            _ => 0,
+        };
+        assert!(token > 0);
+        let adopted = backward.handle_note(
+            Note::Adopt {
+                token,
+                document: image_doc("/pictures/a.png"),
+            },
+            &registry,
+        );
+        assert!(matches!(adopted, Effect::SyncVideo));
+        assert!(matches!(backward.phase, Phase::Transitioning { .. }));
+        assert_eq!(
+            backward.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/b.png"))
+        );
+        assert_eq!(
+            backward.pending_document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/a.png"))
+        );
+    }
+
+    fn three_pictures() -> AppState {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (800.0, 600.0);
+        state.folder = folder();
+        state.folder.entries.push(Entry {
+            path: PathBuf::from("/pictures/c.png"),
+            kind: EntryKind::Image,
+            label: "c".into(),
+        });
+        state.document = Some(image_doc("/pictures/a.png"));
+        state
     }
 
     #[test]

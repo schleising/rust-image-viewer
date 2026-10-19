@@ -84,7 +84,7 @@ impl Command {
         match self {
             Self::Open(_) => !flags.busy,
             Self::ReturnToBrowser | Self::ToggleFullscreen => flags.viewing,
-            Self::Next | Self::Previous => flags.viewing && !flags.transitioning,
+            Self::Next | Self::Previous => flags.viewing,
             Self::Quit | Self::CommitPreview | Self::CancelPreview => false,
             Self::OpenAdjust => flags.image && !flags.busy,
             Self::Transform { .. } => flags.image && !flags.busy,
