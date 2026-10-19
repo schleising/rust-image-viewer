@@ -2,7 +2,7 @@ use crate::command::{self, Command, Mods};
 use crate::effects;
 use crate::platform::menu;
 use crate::protocol;
-use crate::state::{AppState, Mode, ScrollAction};
+use crate::state::{AppState, ClockPlan, Mode, ScrollAction};
 use crate::transforms::ShortcutKey;
 use crate::transitions::TransitionRegistry;
 use crate::viewer;
@@ -10,7 +10,7 @@ use crate::wake::{self, Note};
 use dioxus::desktop::tao::event::{Event, WindowEvent};
 use dioxus::desktop::{use_muda_event_handler, use_window, use_wry_event_handler};
 use dioxus::prelude::*;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const CSS: &str = r#"
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #111; -webkit-user-select: none; user-select: none; }
@@ -78,28 +78,33 @@ pub fn app() -> Element {
         });
         spawn(async move {
             loop {
-                let due = state.read().place_is_due(Instant::now());
-                if due {
+                let notified = wake::clock_listener();
+                let now = Instant::now();
+                if state.read().place_is_due(now) {
                     state.write().hide_place_if_due(Instant::now());
                 }
-                if state.read().ease_due(Instant::now()) {
+                if state.read().ease_due(now) {
                     let effect = state.write().finish_ease();
                     effects::run(state, ease_window.clone(), effect);
                 }
-                if state.read().ease_running() {
-                    tokio::time::sleep(Duration::from_millis(40)).await;
-                    continue;
-                }
-                let (token, delay) = {
-                    let current = state.read();
-                    (current.anim_token, current.animation_delay())
-                };
-                match delay {
-                    Some(delay) => {
-                        tokio::time::sleep(delay).await;
-                        state.write().advance_animation(token);
+                let plan = state.read().clock_plan(Instant::now());
+                match plan {
+                    ClockPlan::Frame { token, delay } => {
+                        let interrupted = tokio::select! {
+                            _ = tokio::time::sleep(delay) => false,
+                            _ = notified => true,
+                        };
+                        if !interrupted {
+                            state.write().advance_animation(token);
+                        }
                     }
-                    None => tokio::time::sleep(Duration::from_millis(40)).await,
+                    ClockPlan::Wait(delay) => {
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay) => {}
+                            _ = notified => {}
+                        }
+                    }
+                    ClockPlan::Idle => notified.await,
                 }
             }
         });

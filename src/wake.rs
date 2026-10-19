@@ -3,6 +3,17 @@ use crate::document::{AnimFrame, Document};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::Notify;
+
+static CLOCK: Notify = Notify::const_new();
+
+pub fn poke_clock() {
+    CLOCK.notify_one();
+}
+
+pub fn clock_listener() -> tokio::sync::futures::Notified<'static> {
+    CLOCK.notified()
+}
 
 pub enum Note {
     Opened(PathBuf),

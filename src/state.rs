@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+pub enum ClockPlan {
+    Idle,
+    Wait(Duration),
+    Frame { token: u64, delay: Duration },
+}
+
 pub const ZOOM_STEP: f64 = 1.05;
 pub const WHEEL_PIXELS: f64 = 50.0;
 const CLICK_SLOP: f64 = 3.0;
@@ -141,6 +147,7 @@ pub struct AppState {
     pub anim_loop_in: Option<usize>,
     pub anim_loop_out: Option<usize>,
     pub anim_token: u64,
+    anim_due: Option<Instant>,
     pub dialog: Option<Dialog>,
     pub adjust_base: Option<Arc<[AnimFrame]>>,
     pub message: Option<String>,
@@ -293,6 +300,7 @@ impl AppState {
             anim_loop_in: None,
             anim_loop_out: None,
             anim_token: 0,
+            anim_due: None,
             dialog: None,
             adjust_base: None,
             message: None,
@@ -378,10 +386,6 @@ impl AppState {
             }
         }
         frames
-    }
-
-    pub fn ease_running(&self) -> bool {
-        matches!(self.phase, Phase::Transitioning { .. })
     }
 
     pub fn blending(&self) -> bool {
@@ -684,6 +688,7 @@ impl AppState {
             }
         }
         self.blending = true;
+        crate::wake::poke_clock();
     }
 
     fn arm_incoming(&mut self) {
@@ -1456,6 +1461,7 @@ impl AppState {
                             slide: if self.nav_delta < 0 { -1 } else { 1 },
                         };
                         self.arm_incoming();
+                        crate::wake::poke_clock();
                         return true;
                     }
                 }
@@ -1960,6 +1966,7 @@ impl AppState {
     pub fn reveal_place(&mut self, now: Instant) {
         self.place_visible = true;
         self.place_until = Some(now + PLACE_HIDE);
+        crate::wake::poke_clock();
     }
 
     pub fn place_is_due(&self, now: Instant) -> bool {
@@ -2031,6 +2038,55 @@ impl AppState {
         Some(frame.delay.div_f32(speed).max(Duration::from_millis(1)))
     }
 
+    pub fn clock_plan(&self, now: Instant) -> ClockPlan {
+        let mut wait: Option<Duration> = None;
+        let mut consider = |delay: Duration| {
+            wait = Some(match wait {
+                Some(current) if current < delay => current,
+                _ => delay,
+            });
+        };
+        if let Some(until) = self.place_until {
+            if until > now {
+                consider(until.saturating_duration_since(now));
+            }
+        }
+        if let Phase::Transitioning {
+            started,
+            armed,
+            duration,
+            ..
+        } = &self.phase
+        {
+            let deadline = match started {
+                Some(started) => *started + *duration,
+                None => *armed + EASE_LOAD_LIMIT,
+            };
+            if deadline > now {
+                consider(deadline.saturating_duration_since(now));
+            }
+        }
+        if self.animation_running() {
+            let frame = self
+                .anim_due
+                .map(|due| due.saturating_duration_since(now))
+                .or_else(|| self.animation_delay());
+            if let Some(frame) = frame {
+                let frame_first = wait.is_none_or(|other| frame <= other);
+                if frame_first {
+                    return ClockPlan::Frame {
+                        token: self.anim_token,
+                        delay: frame,
+                    };
+                }
+            }
+        }
+        match wait {
+            Some(delay) => ClockPlan::Wait(delay.max(Duration::from_millis(1))),
+            None => ClockPlan::Idle,
+        }
+    }
+
     pub fn animation_running(&self) -> bool {
         self.mode == Mode::Viewer
             && !self.animation_paused
@@ -2061,6 +2117,10 @@ impl AppState {
 
     fn bump_anim(&mut self) {
         self.anim_token = self.anim_token.wrapping_add(1);
+        self.anim_due = self
+            .animation_delay()
+            .map(|delay| Instant::now() + delay);
+        crate::wake::poke_clock();
     }
 
     pub fn frames_arc(&self) -> Option<Arc<[AnimFrame]>> {
@@ -2878,6 +2938,19 @@ mod tests {
         assert!(state.open_media(video_doc("/pictures/a.mp4", 3), true, &registry));
         assert!(matches!(state.phase, Phase::Idle));
         assert!(state.video().is_some());
+    }
+
+    #[test]
+    fn a_still_picture_does_not_keep_the_clock_running() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.document = Some(image_doc("/pictures/a.png"));
+        assert!(matches!(state.clock_plan(Instant::now()), ClockPlan::Idle));
+        let now = Instant::now();
+        state.reveal_place(now);
+        assert!(matches!(state.clock_plan(now), ClockPlan::Wait(_)));
+        state.hide_place_if_due(now + PLACE_HIDE);
+        assert!(matches!(state.clock_plan(Instant::now()), ClockPlan::Idle));
     }
 
     #[test]

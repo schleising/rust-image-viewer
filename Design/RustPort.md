@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.2.4"
+version = "1.2.5"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -670,7 +670,7 @@ The grid is CSS. Restoration of highlight and scroll runs in an effect after the
 
 Each thumbnail job captures a `u64` folder generation. Opening another folder increments it, and a stale result is dropped. Image decode uses a worker pool and `fast_image_resize`. Video frames use the same pool and AVFoundation. The requested time is 15% of the duration. The preferred track transform is applied, so a portrait movie stays upright. The generator's maximum size is the thumbnail pixel size. The seek tolerance is 5% of the duration, clamped to 0.25–2 seconds, so the frame stays near that time and can still use a nearby keyframe. An unknown duration uses time 0 and a tolerance of 0.5 seconds. The frame is letterboxed into the same square canvas as an image thumbnail. A failed video frame is logged, and the cell falls back to `video.png`.
 
-The stage is a viewport `div` and two always-mounted `<img>` elements. The shown layer is the one whose frame has loaded. The address is `app://image/g/{generation}/f/{frame}/p/{preview}`. A desktop timer advances `frame_index` when the current frame's display delay elapses, wrapping according to `loop_count`. Pausing stops the timer. The transform stays on the image, so the next frame does not jump back to fit.
+The stage is a viewport `div` and two always-mounted `<img>` elements. The shown layer is the one whose frame has loaded. The address is `app://image/g/{generation}/f/{frame}/p/{preview}`. A desktop timer advances `frame_index` when the current frame's display delay elapses, wrapping according to `loop_count`. Pausing stops the timer. With nothing scheduled — no animation frame, slide, or folder overlay — the timer waits instead of polling. A playing video checks its loop span on time updates, and only runs a frame callback while that span is active. The transform stays on the image, so the next frame does not jump back to fit.
 
 ```rust
 struct Viewport {
@@ -883,7 +883,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.2.4` (or older `…@1.2.4`).
+# cargo pkgid is `path+file:///…/image-viewer#1.2.5` (or older `…@1.2.5`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
