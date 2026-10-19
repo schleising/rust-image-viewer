@@ -29,6 +29,19 @@ sign_app() {
   fi
 }
 
+# The staging .app is a second Image Viewer. Launch Services lists it in the
+# Applications menu until it is unregistered and removed.
+forget_staging() {
+  if [[ ! -d "$APP_DIR" ]]; then
+    return
+  fi
+  local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  if [[ -x "$lsregister" ]]; then
+    "$lsregister" -u "$APP_DIR" || true
+  fi
+  rm -rf "$APP_DIR"
+}
+
 echo "Updating dependencies..."
 cargo update
 
@@ -37,6 +50,7 @@ cargo build --release
 
 BIN="$CARGO_TARGET_DIR/release/image-viewer"
 APP_DIR="$CARGO_TARGET_DIR/release/bundle/osx/Image Viewer.app"
+trap forget_staging EXIT
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 RES="$CONTENTS/Resources"
@@ -67,7 +81,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.0.3` (or older `…@1.0.3`).
+# cargo pkgid is `path+file:///…/image-viewer#1.0.4` (or older `…@1.0.4`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
