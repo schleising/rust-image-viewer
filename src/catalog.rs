@@ -78,7 +78,7 @@ pub fn list_folder(path: &Path) -> Result<FolderView, CatalogError> {
             }
         };
         if meta.is_dir() {
-            if name.starts_with('.') {
+            if name.starts_with('.') || is_system_photo_library(name) {
                 continue;
             }
             directories.push(child);
@@ -195,6 +195,11 @@ fn parent_label(parent: &Path) -> String {
         .to_string()
 }
 
+fn is_system_photo_library(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Photo Booth Library")
+        || name.to_ascii_lowercase().ends_with(".photoslibrary")
+}
+
 fn cmp_path(a: &Path, b: &Path) -> Ordering {
     let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or("");
     let b_name = b.file_name().and_then(|name| name.to_str()).unwrap_or("");
@@ -294,6 +299,25 @@ mod tests {
             .entries
             .iter()
             .all(|entry| entry.kind != EntryKind::Parent));
+        Ok(())
+    }
+
+    #[test]
+    fn system_photo_libraries_are_omitted() -> Result<(), CatalogError> {
+        let dir = TempDir::new();
+        fs::create_dir_all(dir.0.join("Photos Library.photoslibrary"))?;
+        fs::create_dir_all(dir.0.join("Photo Booth Library"))?;
+        fs::create_dir_all(dir.0.join("Holiday"))?;
+        touch(&dir.0.join("a.jpg"));
+
+        let folder = list_folder(&dir.0)?;
+        let labels: Vec<_> = folder
+            .entries
+            .iter()
+            .filter(|entry| entry.kind != EntryKind::Parent)
+            .map(|entry| entry.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Holiday", "a"]);
         Ok(())
     }
 

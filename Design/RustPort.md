@@ -42,7 +42,7 @@ A path is opened whether or not it contains `.vscode`. Do not special-case edito
 - Eight equal columns. The thumbnail's CSS size is the content width divided by eight. The decoded bitmap is that size times the web view device-pixel ratio.
 - Entries, in order:
   1. The parent directory, omitted when its path equals the current path (the filesystem root).
-  2. Other child directories whose names do not start with `.`, sorted by name, case-insensitive.
+  2. Other child directories whose names do not start with `.`, sorted by name, case-insensitive. `Photo Booth Library` and any directory whose name ends with `.photoslibrary` are left out.
   3. Child files with a supported suffix, sorted by name, case-insensitive. A file whose name starts with `.` is included when the suffix matches.
 - The label is the path stem (no suffix), elided in the middle to the cell width. The parent entry is labelled with the parent directory's name, not `..`.
 - Directories use `folder.png`, a flat blue folder in the macOS style.
@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.2.5"
+version = "1.2.6"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -883,7 +883,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.2.5` (or older `…@1.2.5`).
+# cargo pkgid is `path+file:///…/image-viewer#1.2.6` (or older `…@1.2.6`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
@@ -1032,7 +1032,7 @@ The staging bundle under `target/` is unsigned and exists only while the script 
 
 Core tests do not open a window. They implement the formulas in this document against fixed bitmaps. They do not call another application.
 
-- Catalog: sort, hidden directories, parent entry, root directory, unknown suffixes, dotfiles with a supported suffix.
+- Catalog: sort, hidden directories, parent entry, root directory, unknown suffixes, dotfiles with a supported suffix, and the two macOS photo libraries omitted.
 - Viewport: wheel anchor, zoom-to-rect aspect, crop clamping, resize while fitted and while zoomed.
 - Undo: commit, cap at 16, reject preview. Save clears dirty. Undo back onto the saved list clears it again. Undo past that list sets it again. Save filename uses the local-time pattern in section 1, with `.png` for a still and `.gif` for an animation.
 - Startup choice: `oapp` selects the startup folder, `odoc` selects the document, a command-line path is used only when no document event arrived, and an `Opened` event cancels a deferred startup-folder load.
