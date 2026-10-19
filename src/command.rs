@@ -44,6 +44,7 @@ pub enum Command {
     SetLoopIn,
     SetLoopOut,
     ClearLoop,
+    ToggleEase,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -69,6 +70,7 @@ pub struct Availability {
     pub adjusting: bool,
     pub transitioning: bool,
     pub locked: bool,
+    pub ease: bool,
 }
 
 impl Command {
@@ -100,6 +102,7 @@ impl Command {
             | Self::SetLoopIn
             | Self::SetLoopOut
             | Self::ClearLoop => flags.video || flags.animated,
+            Self::ToggleEase => flags.viewing,
         }
     }
 
@@ -266,6 +269,7 @@ mod tests {
             adjusting: false,
             transitioning: false,
             locked: false,
+            ease: false,
         }
     }
 

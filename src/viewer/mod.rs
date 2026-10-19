@@ -32,6 +32,8 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
         back_video_style,
         player_paused,
         player_muted,
+        blending,
+        from_right,
     ) = {
         let snapshot = state.read();
         let shown = snapshot.shown_video_token();
@@ -68,6 +70,8 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             back_video_style,
             snapshot.video().is_some_and(|item| item.paused),
             snapshot.video().is_some_and(|item| item.muted),
+            snapshot.blending(),
+            snapshot.slide_from_right(),
         )
     };
     let pointer_window = window.clone();
@@ -78,8 +82,12 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
     let back_url = back.url.clone();
     let front_load = front_url.clone();
     let back_load = back_url.clone();
-    let front_style = frame_style(view_size, &front, show_front && !cover_stills);
-    let back_style = frame_style(view_size, &back, !show_front && !cover_stills);
+    let front_on_top = show_front && !cover_stills;
+    let back_on_top = !show_front && !cover_stills;
+    let front_class = layer_class(front_on_top, blending, from_right);
+    let back_class = layer_class(back_on_top, blending, from_right);
+    let front_style = frame_style(view_size, &front, front_on_top, blending);
+    let back_style = frame_style(view_size, &back, back_on_top, blending);
     let front_src = frame_src(&front_url);
     let back_src = frame_src(&back_url);
     let warms = state.read().warm_urls();
@@ -197,14 +205,14 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             },
             img {
                 id: "frame-back",
-                class: "frame",
+                class: "{back_class}",
                 src: "{back_src}",
                 style: "{back_style}",
                 onload: move |_| reveal_loaded(&mut state, &back_load),
             }
             img {
                 id: "frame-front",
-                class: "frame",
+                class: "{front_class}",
                 src: "{front_src}",
                 style: "{front_style}",
                 onload: move |_| reveal_loaded(&mut state, &front_load),
@@ -284,6 +292,7 @@ fn video_box_style(view: (f64, f64), layer: &FrameLayer, visible: bool) -> Strin
         layer.scale,
         layer.translation,
         layer.fitted,
+        true,
     );
     let z = if visible { 5 } else { 2 };
     let opacity = if visible { "1" } else { "0" };
@@ -351,16 +360,34 @@ fn frame_src(url: &str) -> String {
 }
 
 fn reveal_loaded(state: &mut Signal<AppState>, url: &str) {
-    if url.is_empty() {
+    if url.is_empty() || url.starts_with("data:") {
         return;
     }
     let reveal = state.read().reveal_would_change(url);
-    if reveal {
+    let slide = state.read().slide_is_waiting_on(url);
+    if reveal || slide {
         state.write().reveal_frame(url);
     }
 }
 
-fn frame_style(view: (f64, f64), layer: &FrameLayer, on_top: bool) -> String {
+fn layer_class(on_top: bool, blending: bool, from_right: bool) -> &'static str {
+    if !blending {
+        return "frame";
+    }
+    if on_top {
+        if from_right {
+            "frame slide-to-left"
+        } else {
+            "frame slide-to-right"
+        }
+    } else if from_right {
+        "frame slide-from-right"
+    } else {
+        "frame slide-from-left"
+    }
+}
+
+fn frame_style(view: (f64, f64), layer: &FrameLayer, on_top: bool, blending: bool) -> String {
     if layer.url.is_empty() {
         return "position:absolute;width:0;height:0;opacity:0;".into();
     }
@@ -370,10 +397,34 @@ fn frame_style(view: (f64, f64), layer: &FrameLayer, on_top: bool) -> String {
         layer.scale,
         layer.translation,
         layer.fitted,
+        !blending,
     );
-    let z = if on_top { 3 } else { 1 };
-    let opacity = if on_top { "1" } else { "0" };
-    format!("{geometry}z-index:{z};opacity:{opacity};")
+    let z = if blending {
+        if on_top { 1 } else { 3 }
+    } else if on_top {
+        3
+    } else {
+        1
+    };
+    if blending {
+        let displayed = layer
+            .size
+            .map(|size| {
+                let (width, _) = viewport::fitted_box(view, size);
+                let factor = if layer.fitted { 1.0 } else { layer.scale };
+                width * factor
+            })
+            .unwrap_or(view.0);
+        let distance = view.0.max(displayed).max(1.0);
+        format!(
+            "{geometry}z-index:{z};opacity:1;--slide-x:{x}px;--slide-y:{y}px;--slide-distance:{distance}px;",
+            x = layer.translation.0,
+            y = layer.translation.1,
+        )
+    } else {
+        let opacity = if on_top { "1" } else { "0" };
+        format!("{geometry}z-index:{z};opacity:{opacity};")
+    }
 }
 
 fn media_style(
@@ -382,6 +433,7 @@ fn media_style(
     scale: f64,
     translation: (f64, f64),
     fitted: bool,
+    include_transform: bool,
 ) -> String {
     let Some(size) = size else {
         return "width:100%;height:100%;object-fit:contain;".into();
@@ -393,11 +445,15 @@ fn media_style(
     let (base_width, base_height) = viewport::fitted_box(view, size);
     let width = base_width * factor;
     let height = base_height * factor;
-    format!(
-        "position:absolute;left:0;top:0;width:{width}px;height:{height}px;transform:translate({x}px,{y}px);",
-        x = translation.0,
-        y = translation.1,
-    )
+    if include_transform {
+        format!(
+            "position:absolute;left:0;top:0;width:{width}px;height:{height}px;transform:translate({x}px,{y}px);",
+            x = translation.0,
+            y = translation.1,
+        )
+    } else {
+        format!("position:absolute;left:0;top:0;width:{width}px;height:{height}px;")
+    }
 }
 
 fn selection_style(state: &AppState) -> Option<String> {

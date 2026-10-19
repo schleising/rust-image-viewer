@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.1.0"
+version = "1.2.1"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -656,13 +656,13 @@ else:
     replace the document and reset the viewport to fit
 ```
 
-`applies` is false for `Cut`, for any video, and when the current mode is the browser. The registry ships `Cut` only, and `AppState.transition` starts as `cut`. There is no preferences file. A later setting writes that field.
+`applies` is false for `Cut`, for any video, and when the current mode is the browser. The registry ships `Cut` and `Ease`. `AppState.transition` starts as `ease`. Show → Slide between Images switches that field between `ease` and `cut`. There is no preferences file.
 
-A later crossfade is a CSS opacity animation between the two image layers that are already mounted. It does not re-decode. Those two layers already hold the previous picture until the next one has loaded; that hold is not a transition. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol. Video and folder changes stay hard cuts.
+`Ease` slides the two mounted image layers. Next brings the incoming picture in from the right and moves the outgoing picture off to the left. Previous does the opposite. The motion is 400ms on `cubic-bezier(0.22, 1, 0.36, 1)`. It does not re-decode. The slide starts when the incoming layer has loaded, so a preloaded neighbour begins at once. The outgoing document stays current until the animation ends, then the pending document is installed and served from `app://near/{token}/f/{frame}`, the address the hidden layer already used. Opening a file, changing folder, and any step that involves a video stay hard cuts. The same two layers still hold the previous picture until the next one has loaded when the step is a cut; that hold is not a transition. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol.
 
-While a picture is on screen, the previous and next image files in the folder order are decoded in the background and requested by hidden images, so a step does not wait on disk. A neighbour that is a video is left until it is opened. Stepping onto a picture that has already been decoded installs that document at once and serves it from the address the hidden image already loaded (`app://near/{token}/f/{frame}`). Going back reuses the picture just left when it has no unsaved edit.
+While a picture is on screen, the previous and next image files in the folder order are decoded in the background and requested by hidden images, so a step does not wait on disk. A neighbour that is a video is left until it is opened. Stepping onto a picture that has already been decoded reuses that document. Going back reuses the picture just left when it has no unsaved edit.
 
-While a transition runs, Next and Previous are ignored.
+While a transition runs, Next and Previous are ignored. If the incoming picture has not loaded after 1.5 seconds, the step completes as a cut.
 
 ## 8. Browser and stage
 
@@ -883,7 +883,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.1.0` (or older `…@1.1.0`).
+# cargo pkgid is `path+file:///…/image-viewer#1.2.1` (or older `…@1.2.1`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
@@ -1042,7 +1042,7 @@ Core tests do not open a window. They implement the formulas in this document ag
 - Denoise: a small fixture with a recorded output, so later edits do not drift.
 - FSRCNN: upscale an 8×8 colour image by 4. The corners keep their alpha, and a flat colour stays within 24 levels. If the model file is missing, the error says so.
 - Video thumbnail time: 15% of a real duration, and the seek window stays near that point. A further test builds a short clip with ffmpeg, when ffmpeg is installed, and checks that the grabbed frame is the one from 15% of the way through, right way up. If ffmpeg is not installed, that test passes without checking a frame. The application itself does not call ffmpeg.
-- Navigator: `Cut` swaps immediately. A test double with `applies == true` records `Transitioning` and ignores a second Next while it runs. Opening a file path shows the viewer before the folder listing arrives. A shown video stays up across pause and across the load of the next video. The visible picture stays until the next one has loaded. A decoded neighbour opens without another file read, and the picture just left is ready for the step back.
+- Navigator: `Cut` swaps immediately. `Ease` keeps the outgoing picture until the slide ends, then installs the pending one. Next enters from the right and Previous from the left. A test double with `applies == true` records `Transitioning` and ignores a second Next while it runs. Opening a file path shows the viewer before the folder listing arrives. A shown video stays up across pause and across the load of the next video. The visible picture stays until the next one has loaded. A decoded neighbour opens without another file read, and the picture just left is ready for the step back.
 
 Manual pass on `/Applications/Image Viewer.app` after `scripts/install-app.sh`:
 
@@ -1068,7 +1068,7 @@ This is the order the application was built in. The behaviour in section 1 is th
 5. Transform registry, kernels, enhancers, undo, save (clearing dirty; PNG or animated GIF), dialogs, and native menus. Edits apply to every frame.
 6. Video protocol, element bridge, scrubber, and video menu.
 7. Denoise, then FSRCNN after the ONNX files and `assets/models/README.md` exist.
-8. Transition registry with `Cut` wired through the navigator, plus the test double for a later crossfade.
+8. Transition registry with `Cut` and `Ease` wired through the navigator, plus the test double that holds a transition open.
 
 Each step leaves an app that `scripts/install-app.sh` can install. A transform added after step 5 is a registry entry only.
 
@@ -1086,5 +1086,5 @@ Each step leaves an app that `scripts/install-app.sh` can install. A transform a
 | Working pixels | `Arc<[AnimFrame]>` of `RgbaImage`. Alpha is preserved and excluded from filters. |
 | Undo | Cap 16 frame lists. Save clears dirty by remembering that list. |
 | Inference | `tract-onnx` and bundled ONNX, isolated in one module. Missing models leave the image unchanged. |
-| Transitions | Trait plus `Cut` now. Crossfade is the first CSS style to add. Procedural frames are a later style on the same navigator. |
+| Transitions | `Ease` is the default between images: a 400ms Bezier slide. Next enters from the right, Previous from the left. `Cut` remains for video, the browser, and the Show menu toggle. Procedural frames are a later style on the same navigator. |
 | Bundle assembly | Hand-written `.app` in the install script. No bundler and no disk image. |

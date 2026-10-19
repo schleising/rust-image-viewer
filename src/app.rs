@@ -29,6 +29,14 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .label { white-space: nowrap; overflow: hidden; }
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: light-dark(#aeaeac, #101010); touch-action: none; }
 .frame, video, .preload { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; background: transparent; }
+.frame.slide-from-right { animation: slide-from-right 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.frame.slide-from-left { animation: slide-from-left 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.frame.slide-to-left { animation: slide-to-left 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.frame.slide-to-right { animation: slide-to-right 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+@keyframes slide-from-right { from { transform: translate(calc(var(--slide-x) + var(--slide-distance)), var(--slide-y)); } to { transform: translate(var(--slide-x), var(--slide-y)); } }
+@keyframes slide-from-left { from { transform: translate(calc(var(--slide-x) - var(--slide-distance)), var(--slide-y)); } to { transform: translate(var(--slide-x), var(--slide-y)); } }
+@keyframes slide-to-left { from { transform: translate(var(--slide-x), var(--slide-y)); } to { transform: translate(calc(var(--slide-x) - var(--slide-distance)), var(--slide-y)); } }
+@keyframes slide-to-right { from { transform: translate(var(--slide-x), var(--slide-y)); } to { transform: translate(calc(var(--slide-x) + var(--slide-distance)), var(--slide-y)); } }
 .preload { position: absolute; left: -10000px; top: 0; width: 8px; height: 8px; opacity: 0; }
 .selection { position: absolute; z-index: 4; box-sizing: border-box; background: rgba(30, 144, 255, 0.5); border: 1px solid rgb(30, 144, 255); pointer-events: none; }
 .scrubber { position: absolute; z-index: 6; left: 84px; right: 84px; bottom: 90px; padding: 12px 16px 10px; border-radius: 12px; background: rgba(0, 0, 0, 0.38); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 6px 18px rgba(0, 0, 0, 0.18); pointer-events: none; overflow: visible; opacity: 0; transition: opacity 240ms ease; }
@@ -62,6 +70,7 @@ pub fn app() -> Element {
         wake::bind_runtime();
         let mut notes = wake::install();
         let window = window.clone();
+        let ease_window = window.clone();
         spawn(async move {
             while let Some(note) = notes.recv().await {
                 deliver(state, window.clone(), note);
@@ -72,6 +81,14 @@ pub fn app() -> Element {
                 let due = state.read().place_is_due(Instant::now());
                 if due {
                     state.write().hide_place_if_due(Instant::now());
+                }
+                if state.read().ease_due(Instant::now()) {
+                    let effect = state.write().finish_ease();
+                    effects::run(state, ease_window.clone(), effect);
+                }
+                if state.read().ease_running() {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    continue;
                 }
                 let (token, delay) = {
                     let current = state.read();

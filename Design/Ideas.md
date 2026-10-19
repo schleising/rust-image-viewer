@@ -30,7 +30,7 @@ The grid is eight columns, sorted by name, with one highlight. That is enough fo
 
 Fit, zoom, pan, and a single selection rectangle are in place. The two image layers already cross-fade in spirit: the old picture stays until the new one has loaded.
 
-- [ ] **Crossfade.** The transition registry ships an instant cut, and the two layers are already mounted. A crossfade is an opacity animation between them. Video and folder changes stay hard cuts, as the specification already says. A later setting would choose the transition; until there is a preferences window, a menu item under Show is enough.
+- [x] **Crossfade.** The transition registry ships an instant cut, and the two layers are already mounted. Between images, the next picture slides in from the right and the previous picture slides in from the left, on a Bezier curve, while the outgoing picture slides away. Video and folder changes stay hard cuts, as the specification already says. A later setting would choose the transition; until there is a preferences window, a menu item under Show is enough.
 - [ ] **Other transitions.** A wipe or a blend is a function from two frames and a time to one frame, served through the same image address. The registry is the place to add them. Keep them short. A slow transition makes Left and Right feel broken, and Next is ignored while one is running.
 - [ ] **Slideshow.** Advance on a timer, with the chosen transition, and pause on Space. Esc or Up leaves it. The interval is the only new number.
 - [ ] **Actual size.** A command that sets the zoom so one image pixel is one screen pixel, then the existing pan. Reset Zoom already returns to fit.

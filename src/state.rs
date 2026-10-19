@@ -16,6 +16,8 @@ const CLICK_SLOP: f64 = 3.0;
 const PLACE_HIDE: Duration = Duration::from_millis(500);
 const DEBOUNCE: Duration = Duration::from_millis(20);
 const OPEN_FULLSCREEN_GUARD: Duration = Duration::from_millis(400);
+const EASE_SETTLE: Duration = Duration::from_millis(40);
+const EASE_LOAD_LIMIT: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -36,7 +38,14 @@ pub enum Dialog {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Phase {
     Idle,
-    Transitioning { from: PathBuf, to: PathBuf },
+    Transitioning {
+        from: PathBuf,
+        to: PathBuf,
+        started: Option<Instant>,
+        armed: Instant,
+        duration: Duration,
+        slide: i8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -105,6 +114,11 @@ struct NearSlot {
     document: Option<Document>,
 }
 
+struct Incoming {
+    url: String,
+    size: (u32, u32),
+}
+
 pub struct AppState {
     pub mode: Mode,
     pub folder: FolderView,
@@ -166,6 +180,11 @@ pub struct AppState {
     pub preload_epoch: u64,
     waiting_token: Option<u64>,
     warm_token: Option<u64>,
+    incoming: Option<Incoming>,
+    blending: bool,
+    blend_token: Option<u64>,
+    blend_frames: Option<Arc<[AnimFrame]>>,
+    nav_delta: i8,
 }
 
 pub struct Drag {
@@ -262,7 +281,7 @@ impl AppState {
             preview: None,
             preview_ticket: 0,
             busy: false,
-            transition: TransitionId::new("cut"),
+            transition: TransitionId::new("ease"),
             phase: Phase::Idle,
             frame_index: 0,
             loops_left: None,
@@ -311,6 +330,11 @@ impl AppState {
             preload_epoch: 0,
             waiting_token: None,
             warm_token: None,
+            incoming: None,
+            blending: false,
+            blend_token: None,
+            blend_frames: None,
+            nav_delta: 1,
         }
     }
 
@@ -336,13 +360,56 @@ impl AppState {
     }
 
     pub fn near_frames(&self) -> Vec<(u64, Arc<[AnimFrame]>)> {
-        self.prepared
+        let mut frames: Vec<_> = self
+            .prepared
             .iter()
             .filter_map(|slot| match &slot.document {
                 Some(Document::Image(image)) => Some((slot.token, Arc::clone(&image.frames))),
                 _ => None,
             })
-            .collect()
+            .collect();
+        if let (Some(token), Some(blend)) = (self.blend_token, self.blend_frames.as_ref()) {
+            if frames.iter().all(|(existing, _)| *existing != token) {
+                frames.push((token, Arc::clone(blend)));
+            }
+        }
+        frames
+    }
+
+    pub fn ease_running(&self) -> bool {
+        matches!(self.phase, Phase::Transitioning { .. })
+    }
+
+    pub fn blending(&self) -> bool {
+        self.blending
+    }
+
+    pub fn slide_from_right(&self) -> bool {
+        match self.phase {
+            Phase::Transitioning { slide, .. } => slide >= 0,
+            Phase::Idle => true,
+        }
+    }
+
+    pub fn slide_is_waiting_on(&self, url: &str) -> bool {
+        self.incoming.as_ref().is_some_and(|item| item.url == url)
+            && matches!(self.phase, Phase::Transitioning { started: None, .. })
+    }
+
+    pub fn ease_due(&self, now: Instant) -> bool {
+        match self.phase {
+            Phase::Transitioning {
+                started: Some(started),
+                duration,
+                ..
+            } => now.saturating_duration_since(started) >= duration,
+            Phase::Transitioning {
+                started: None,
+                armed,
+                ..
+            } => now.saturating_duration_since(armed) >= EASE_LOAD_LIMIT,
+            Phase::Idle => false,
+        }
     }
 
     pub fn warm_urls(&self) -> Vec<String> {
@@ -376,6 +443,25 @@ impl AppState {
     }
 
     pub fn display_needs_sync(&self) -> bool {
+        if self.blending {
+            return false;
+        }
+        if let Some(incoming) = self.incoming_layer() {
+            let hidden = if self.show_front {
+                &self.back
+            } else {
+                &self.front
+            };
+            let visible = if self.show_front {
+                &self.front
+            } else {
+                &self.back
+            };
+            let visible_stale = self.desired_frame().is_some_and(|desired| {
+                (visible.url.is_empty() || visible.url == desired.url) && visible != &desired
+            });
+            return hidden != &incoming || visible_stale;
+        }
         let Some(desired) = self.desired_frame() else {
             return false;
         };
@@ -396,6 +482,13 @@ impl AppState {
     }
 
     pub fn sync_display(&mut self) {
+        if self.blending {
+            return;
+        }
+        if self.incoming.is_some() {
+            self.sync_incoming();
+            return;
+        }
         let Some(desired) = self.desired_frame() else {
             return;
         };
@@ -444,6 +537,12 @@ impl AppState {
     }
 
     pub fn reveal_frame(&mut self, url: &str) {
+        if self.incoming.as_ref().is_some_and(|item| item.url == url)
+            && matches!(self.phase, Phase::Transitioning { started: None, .. })
+        {
+            self.begin_ease(Instant::now());
+            return;
+        }
         if !self.reveal_would_change(url) {
             return;
         }
@@ -455,6 +554,116 @@ impl AppState {
         if self.video().is_none() {
             self.clear_video_slots();
         }
+    }
+
+    fn incoming_layer(&self) -> Option<FrameLayer> {
+        let incoming = self.incoming.as_ref()?;
+        if incoming.size.0 == 0 || incoming.size.1 == 0 {
+            return None;
+        }
+        let mut viewport = Viewport::fitted();
+        viewport.refit(self.view_size, incoming.size);
+        Some(FrameLayer {
+            url: incoming.url.clone(),
+            size: Some(incoming.size),
+            fitted: viewport.fitted,
+            scale: viewport.scale,
+            translation: viewport.translation,
+        })
+    }
+
+    fn sync_incoming(&mut self) {
+        let Some(incoming) = self.incoming_layer() else {
+            return;
+        };
+        let update_visible = self.desired_frame().is_some_and(|desired| {
+            let visible = if self.show_front {
+                &self.front
+            } else {
+                &self.back
+            };
+            (visible.url.is_empty() || visible.url == desired.url) && visible != &desired
+        });
+        if update_visible {
+            if let Some(desired) = self.desired_frame() {
+                if self.show_front {
+                    self.front = desired;
+                } else {
+                    self.back = desired;
+                }
+            }
+        }
+        if self.show_front {
+            self.back = incoming;
+        } else {
+            self.front = incoming;
+        }
+    }
+
+    fn begin_ease(&mut self, now: Instant) {
+        if let Phase::Transitioning { started, .. } = &mut self.phase {
+            if started.is_none() {
+                *started = Some(now);
+            }
+        }
+        self.blending = true;
+    }
+
+    fn arm_incoming(&mut self) {
+        let prepared = self.pending_document.as_ref().and_then(|document| {
+            let Document::Image(image) = document else {
+                return None;
+            };
+            Some((
+                (image.metadata.width, image.metadata.height),
+                Arc::clone(&image.frames),
+            ))
+        });
+        let Some((size, frames)) = prepared else {
+            return;
+        };
+        let token = match self.blend_token {
+            Some(token) => token,
+            None => self.alloc_near_token(),
+        };
+        self.blend_token = Some(token);
+        self.blend_frames = Some(frames);
+        self.incoming = Some(Incoming {
+            url: format!("app://near/{token}/f/0"),
+            size,
+        });
+        self.blending = false;
+        self.touch_preload();
+    }
+
+    fn clear_blend(&mut self) {
+        self.incoming = None;
+        self.blending = false;
+        self.blend_token = None;
+        self.blend_frames = None;
+    }
+
+    pub fn finish_ease(&mut self) -> Effect {
+        let Some(document) = self.pending_document.take() else {
+            self.clear_blend();
+            self.phase = Phase::Idle;
+            return Effect::None;
+        };
+        let token = self.blend_token;
+        let url = self.incoming.as_ref().map(|item| item.url.clone());
+        self.install_document(document);
+        if let Some(token) = token {
+            self.warm_token = Some(token);
+        }
+        if let Some(url) = url.as_deref() {
+            if self.front.url == url {
+                self.show_front = true;
+            } else if self.back.url == url {
+                self.show_front = false;
+            }
+        }
+        self.touch_preload();
+        self.after_show()
     }
 
     fn desired_video_layer(&self) -> Option<FrameLayer> {
@@ -657,6 +866,7 @@ impl AppState {
             adjusting: matches!(self.dialog, Some(Dialog::Adjust { .. })),
             transitioning: matches!(self.phase, Phase::Transitioning { .. }),
             locked: self.long_operation(),
+            ease: self.transition.as_str() == "ease",
         }
     }
 
@@ -825,6 +1035,14 @@ impl AppState {
             Command::SetLoopIn => self.set_loop_in(),
             Command::SetLoopOut => self.set_loop_out(),
             Command::ClearLoop => self.clear_loop(),
+            Command::ToggleEase => {
+                self.transition = if self.transition.as_str() == "ease" {
+                    TransitionId::new("cut")
+                } else {
+                    TransitionId::new("ease")
+                };
+                Effect::None
+            }
         }
     }
 
@@ -896,6 +1114,7 @@ impl AppState {
         let Some(path) = self.media_step(delta) else {
             return Effect::None;
         };
+        self.nav_delta = if delta < 0 { -1 } else { 1 };
         self.highlight_path(&path);
         self.reveal_place(Instant::now());
         if let Some((token, document)) = self.take_ready(&path) {
@@ -1052,9 +1271,12 @@ impl AppState {
     ) -> Effect {
         self.waiting_token = None;
         self.clear_busy();
+        self.blend_token = Some(token);
         self.open_media(document, true, registry);
         if !matches!(self.phase, Phase::Transitioning { .. }) {
             self.warm_token = Some(token);
+            self.blend_token = None;
+            self.blend_frames = None;
             self.touch_preload();
         }
         self.after_show()
@@ -1120,26 +1342,37 @@ impl AppState {
                 in_browser: self.mode == Mode::Browser,
                 current_is_video: matches!(self.document, Some(Document::Video(_))),
                 next_is_video: matches!(document, Document::Video(_)),
+                has_current_image: matches!(self.document, Some(Document::Image(_))),
             };
-            if let Some(transition) = registry.get(self.transition) {
-                if transition.applies(&ctx) {
-                    tracing::info!(
-                        id = self.transition.as_str(),
-                        name = transition.label(),
-                        ms = transition.duration().as_millis() as u64,
-                        style = transition.style() as u8,
-                        "playing a transition"
-                    );
-                    let from = self
-                        .document
-                        .as_ref()
-                        .map(Document::path)
-                        .map(Path::to_path_buf)
-                        .unwrap_or_default();
-                    let to = document.path().to_path_buf();
-                    self.pending_document = Some(document);
-                    self.phase = Phase::Transitioning { from, to };
-                    return true;
+            let from = self
+                .document
+                .as_ref()
+                .map(Document::path)
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            let to = document.path().to_path_buf();
+            if from != to {
+                if let Some(transition) = registry.get(self.transition) {
+                    if transition.applies(&ctx) {
+                        tracing::info!(
+                            id = self.transition.as_str(),
+                            name = transition.label(),
+                            ms = transition.duration().as_millis() as u64,
+                            style = transition.style() as u8,
+                            "playing a transition"
+                        );
+                        self.pending_document = Some(document);
+                        self.phase = Phase::Transitioning {
+                            from,
+                            to,
+                            started: None,
+                            armed: Instant::now(),
+                            duration: transition.duration().saturating_add(EASE_SETTLE),
+                            slide: if self.nav_delta < 0 { -1 } else { 1 },
+                        };
+                        self.arm_incoming();
+                        return true;
+                    }
                 }
             }
         }
@@ -1148,6 +1381,7 @@ impl AppState {
     }
 
     fn install_document(&mut self, mut document: Document) {
+        self.clear_blend();
         self.remember_shown();
         if let Document::Video(video) = &mut document {
             self.image_generation += 1;
@@ -1214,6 +1448,7 @@ impl AppState {
         self.prepared.clear();
         self.waiting_token = None;
         self.warm_token = None;
+        self.clear_blend();
         self.touch_preload();
         self.bump_anim();
     }
@@ -2417,8 +2652,10 @@ mod tests {
     #[test]
     fn cut_replaces_the_open_file_immediately() {
         let mut state = AppState::new();
+        state.mode = Mode::Viewer;
         state.folder = folder();
         state.document = Some(image_doc("/pictures/a.png"));
+        state.transition = TransitionId::new("cut");
         let registry = TransitionRegistry::builtin();
         assert!(state.open_media(image_doc("/pictures/b.png"), true, &registry));
         assert!(matches!(state.phase, Phase::Idle));
@@ -2427,6 +2664,69 @@ mod tests {
             Some(Path::new("/pictures/b.png"))
         );
         assert!(state.viewport.fitted);
+    }
+
+    #[test]
+    fn ease_between_images_keeps_the_outgoing_picture_until_the_fade_ends() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (800.0, 600.0);
+        state.folder = folder();
+        state.document = Some(image_doc("/pictures/a.png"));
+        state.nav_delta = -1;
+        let registry = TransitionRegistry::builtin();
+        assert_eq!(state.transition.as_str(), "ease");
+        assert!(state.open_media(image_doc("/pictures/b.png"), true, &registry));
+        assert!(matches!(
+            state.phase,
+            Phase::Transitioning {
+                slide: -1,
+                started: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            state.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/a.png"))
+        );
+        assert_eq!(
+            state.pending_document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/b.png"))
+        );
+        let url = state
+            .incoming
+            .as_ref()
+            .map(|item| item.url.clone())
+            .unwrap_or_default();
+        assert!(url.starts_with("app://near/"));
+        assert!(state.slide_is_waiting_on(&url));
+        assert!(!state.reveal_would_change(&url));
+        assert!(!state.open_media(image_doc("/pictures/c.png"), true, &registry));
+        assert!(!state.ease_due(Instant::now()));
+        state.sync_display();
+        let hidden = if state.show_front {
+            state.back.url.clone()
+        } else {
+            state.front.url.clone()
+        };
+        assert_eq!(hidden, url);
+        state.reveal_frame(&url);
+        assert!(state.blending());
+        assert!(!state.ease_due(Instant::now() + Duration::from_millis(200)));
+        assert!(state.ease_due(Instant::now() + Duration::from_millis(500)));
+        let effect = state.finish_ease();
+        assert!(matches!(state.phase, Phase::Idle));
+        assert_eq!(
+            state.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/b.png"))
+        );
+        assert!(state.warm_token().is_some());
+        assert!(state.image_url().starts_with("app://near/"));
+        assert!(!state.blending());
+        assert!(matches!(effect, Effect::SyncVideo | Effect::Prepare(_)));
+        assert!(state.open_media(video_doc("/pictures/a.mp4", 3), true, &registry));
+        assert!(matches!(state.phase, Phase::Idle));
+        assert!(state.video().is_some());
     }
 
     #[test]
@@ -2692,11 +2992,18 @@ mod tests {
         );
         assert_eq!(
             state.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/b.png"))
+        );
+        assert!(matches!(state.phase, Phase::Transitioning { .. }));
+        assert!(matches!(adopted, Effect::SyncVideo));
+        let finished = state.finish_ease();
+        assert_eq!(
+            state.document.as_ref().map(Document::path),
             Some(Path::new("/pictures/c.png"))
         );
         assert_eq!(state.warm_token(), Some(token));
         assert!(state.image_url().starts_with(&format!("app://near/{token}/")));
-        assert!(matches!(adopted, Effect::SyncVideo));
+        assert!(matches!(finished, Effect::SyncVideo | Effect::Prepare(_)));
         let back = state.dispatch(
             Command::Previous,
             Instant::now() + Duration::from_millis(30),

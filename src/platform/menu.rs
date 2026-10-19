@@ -1,7 +1,9 @@
 use crate::command::{Availability, Command};
 use crate::transforms::{self, MenuGroup, Params, Shortcut, ShortcutKey};
 use dioxus::desktop::muda::accelerator::{Accelerator, Code, Modifiers};
-use dioxus::desktop::muda::{AboutMetadata, Icon, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use dioxus::desktop::muda::{
+    AboutMetadata, CheckMenuItem, Icon, Menu, MenuItem, PredefinedMenuItem, Submenu,
+};
 use std::cell::RefCell;
 
 struct Hub {
@@ -9,6 +11,7 @@ struct Hub {
     show: Submenu,
     image: Submenu,
     video: Submenu,
+    ease: CheckMenuItem,
     items: Vec<(String, MenuItem, Command)>,
 }
 
@@ -120,6 +123,9 @@ pub fn native_menu() -> Menu {
         Command::ShowInfo,
         false,
     );
+    let _ = show.append(&PredefinedMenuItem::separator());
+    let ease = CheckMenuItem::with_id("ease", "Slide between Images", false, true, None);
+    let _ = show.append(&ease);
 
     let mut transforms = transforms::builtin_transforms();
     transforms.sort_by_key(|item| item.order());
@@ -277,6 +283,7 @@ pub fn native_menu() -> Menu {
             show,
             image,
             video,
+            ease,
             items,
         });
     });
@@ -296,10 +303,16 @@ pub fn sync(flags: &Availability) {
         for (_, item, command) in &hub.items {
             item.set_enabled(command.available(flags));
         }
+        hub.ease
+            .set_enabled(Command::ToggleEase.available(flags));
+        hub.ease.set_checked(flags.ease);
     });
 }
 
 pub fn command_for(id: &str) -> Option<Command> {
+    if id == "ease" {
+        return Some(Command::ToggleEase);
+    }
     HUB.with(|hub| {
         hub.borrow().as_ref().and_then(|hub| {
             hub.items

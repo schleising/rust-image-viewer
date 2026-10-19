@@ -17,18 +17,20 @@ impl TransitionId {
 #[repr(u8)]
 pub enum TransitionStyle {
     Cut = 0,
-    #[allow(dead_code)]
     Crossfade = 1,
     #[allow(dead_code)]
     Procedural = 2,
 }
 
+/// How long the slide runs. The navigator waits one extra timer tick so the animation can finish.
+pub const EASE_MS: u64 = 400;
+
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)]
 pub struct TransitionContext {
     pub in_browser: bool,
     pub current_is_video: bool,
     pub next_is_video: bool,
+    pub has_current_image: bool,
 }
 
 pub trait ImageTransition: Send + Sync {
@@ -37,6 +39,26 @@ pub trait ImageTransition: Send + Sync {
     fn duration(&self) -> Duration;
     fn style(&self) -> TransitionStyle;
     fn applies(&self, ctx: &TransitionContext) -> bool;
+}
+
+pub struct Ease;
+
+impl ImageTransition for Ease {
+    fn id(&self) -> TransitionId {
+        TransitionId::new("ease")
+    }
+    fn label(&self) -> &'static str {
+        "Ease"
+    }
+    fn duration(&self) -> Duration {
+        Duration::from_millis(EASE_MS)
+    }
+    fn style(&self) -> TransitionStyle {
+        TransitionStyle::Crossfade
+    }
+    fn applies(&self, ctx: &TransitionContext) -> bool {
+        ctx.has_current_image && !ctx.in_browser && !ctx.current_is_video && !ctx.next_is_video
+    }
 }
 
 pub struct Cut;
@@ -66,7 +88,7 @@ pub struct TransitionRegistry {
 impl TransitionRegistry {
     pub fn builtin() -> Self {
         Self {
-            items: vec![Box::new(Cut)],
+            items: vec![Box::new(Cut), Box::new(Ease)],
         }
     }
 
