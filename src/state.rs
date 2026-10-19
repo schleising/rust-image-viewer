@@ -92,6 +92,17 @@ pub enum Effect {
     ToggleFullscreen,
     SyncVideo,
     FocusPage,
+    Prepare(Vec<(u64, PathBuf)>),
+    UsePrepared {
+        token: u64,
+        document: Document,
+    },
+}
+
+struct NearSlot {
+    token: u64,
+    path: PathBuf,
+    document: Option<Document>,
 }
 
 pub struct AppState {
@@ -150,6 +161,11 @@ pub struct AppState {
     pub show_front: bool,
     pub front: FrameLayer,
     pub back: FrameLayer,
+    prepared: Vec<NearSlot>,
+    preload_token: u64,
+    pub preload_epoch: u64,
+    waiting_token: Option<u64>,
+    warm_token: Option<u64>,
 }
 
 pub struct Drag {
@@ -290,6 +306,11 @@ impl AppState {
             show_front: true,
             front: FrameLayer::blank(),
             back: FrameLayer::blank(),
+            prepared: Vec::new(),
+            preload_token: 0,
+            preload_epoch: 0,
+            waiting_token: None,
+            warm_token: None,
         }
     }
 
@@ -299,10 +320,42 @@ impl AppState {
         } else {
             0
         };
+        if preview == 0 {
+            if let Some(token) = self.warm_token {
+                return format!("app://near/{token}/f/{}", self.frame_index);
+            }
+        }
         format!(
             "app://image/g/{}/f/{}/p/{preview}",
             self.image_generation, self.frame_index
         )
+    }
+
+    pub fn warm_token(&self) -> Option<u64> {
+        self.warm_token
+    }
+
+    pub fn near_frames(&self) -> Vec<(u64, Arc<[AnimFrame]>)> {
+        self.prepared
+            .iter()
+            .filter_map(|slot| match &slot.document {
+                Some(Document::Image(image)) => Some((slot.token, Arc::clone(&image.frames))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn warm_urls(&self) -> Vec<String> {
+        self.prepared
+            .iter()
+            .filter(|slot| {
+                slot.document
+                    .as_ref()
+                    .is_some_and(|document| matches!(document, Document::Image(_)))
+                    && self.warm_token != Some(slot.token)
+            })
+            .map(|slot| format!("app://near/{}/f/0", slot.token))
+            .collect()
     }
 
     fn desired_frame(&self) -> Option<FrameLayer> {
@@ -827,6 +880,7 @@ impl AppState {
         }
         self.load_ticket += 1;
         self.pending_navigation = navigation;
+        self.waiting_token = None;
         self.busy = true;
         self.message = None;
         Effect::LoadFile {
@@ -836,9 +890,36 @@ impl AppState {
     }
 
     fn step_media(&mut self, delta: isize) -> Effect {
+        if matches!(self.phase, Phase::Transitioning { .. }) {
+            return Effect::None;
+        }
+        let Some(path) = self.media_step(delta) else {
+            return Effect::None;
+        };
+        self.highlight_path(&path);
+        self.reveal_place(Instant::now());
+        if let Some((token, document)) = self.take_ready(&path) {
+            return Effect::UsePrepared { token, document };
+        }
+        if let Some(token) = self
+            .prepared
+            .iter()
+            .find(|slot| slot.path == path && slot.document.is_none())
+            .map(|slot| slot.token)
+        {
+            self.waiting_token = Some(token);
+            self.pending_navigation = true;
+            self.busy = true;
+            self.message = None;
+            return Effect::None;
+        }
+        self.begin_load(path, true)
+    }
+
+    fn media_step(&self, delta: isize) -> Option<PathBuf> {
         let paths = catalog::media_paths(&self.folder);
         if paths.is_empty() {
-            return Effect::None;
+            return None;
         }
         let current = self.document.as_ref().map(Document::path);
         let index = current
@@ -846,12 +927,172 @@ impl AppState {
             .unwrap_or(0);
         let len = paths.len() as isize;
         let next = (index as isize + delta).rem_euclid(len) as usize;
-        let Some(path) = paths.get(next).cloned() else {
+        paths.get(next).cloned()
+    }
+
+    fn neighbour_image_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let current = self.document.as_ref().map(Document::path);
+        for delta in [-1, 1] {
+            let Some(path) = self.media_step(delta) else {
+                continue;
+            };
+            if current.is_some_and(|open| open == path) {
+                continue;
+            }
+            if !self.folder.entries.iter().any(|entry| {
+                entry.path == path && matches!(entry.kind, EntryKind::Image)
+            }) {
+                continue;
+            }
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
+    fn alloc_near_token(&mut self) -> u64 {
+        self.preload_token = self.preload_token.wrapping_add(1);
+        self.preload_token
+    }
+
+    fn touch_preload(&mut self) {
+        self.preload_epoch = self.preload_epoch.wrapping_add(1);
+    }
+
+    fn queue_neighbours(&mut self) -> Vec<(u64, PathBuf)> {
+        if self.mode != Mode::Viewer || self.document.is_none() {
+            if !self.prepared.is_empty() {
+                self.prepared.clear();
+                self.touch_preload();
+            }
+            return Vec::new();
+        }
+        let wanted = self.neighbour_image_paths();
+        let before = self.prepared.len();
+        self.prepared
+            .retain(|slot| wanted.iter().any(|path| path == &slot.path));
+        if self.prepared.len() != before {
+            self.touch_preload();
+        }
+        let mut jobs = Vec::new();
+        for path in wanted {
+            if self.prepared.iter().any(|slot| slot.path == path) {
+                continue;
+            }
+            let token = self.alloc_near_token();
+            self.prepared.push(NearSlot {
+                token,
+                path: path.clone(),
+                document: None,
+            });
+            self.touch_preload();
+            jobs.push((token, path));
+        }
+        jobs
+    }
+
+    fn after_show(&mut self) -> Effect {
+        if matches!(self.phase, Phase::Transitioning { .. }) {
+            return Effect::SyncVideo;
+        }
+        let jobs = self.queue_neighbours();
+        if jobs.is_empty() {
+            Effect::SyncVideo
+        } else {
+            Effect::Prepare(jobs)
+        }
+    }
+
+    fn take_ready(&mut self, path: &Path) -> Option<(u64, Document)> {
+        let index = self
+            .prepared
+            .iter()
+            .position(|slot| slot.path == path && slot.document.is_some())?;
+        let slot = self.prepared.remove(index);
+        self.touch_preload();
+        let document = slot.document?;
+        Some((slot.token, document))
+    }
+
+    fn remember_shown(&mut self) {
+        if self.is_dirty() {
+            return;
+        }
+        let Some(document) = self.document.clone() else {
+            return;
+        };
+        if !matches!(document, Document::Image(_)) {
+            return;
+        }
+        let path = document.path().to_path_buf();
+        if let Some(slot) = self.prepared.iter_mut().find(|slot| slot.path == path) {
+            slot.document = Some(document);
+            self.touch_preload();
+            return;
+        }
+        let token = match self.warm_token {
+            Some(token) => token,
+            None => self.alloc_near_token(),
+        };
+        self.prepared.push(NearSlot {
+            token,
+            path,
+            document: Some(document),
+        });
+        self.touch_preload();
+    }
+
+    fn adopt_prepared(
+        &mut self,
+        token: u64,
+        document: Document,
+        registry: &TransitionRegistry,
+    ) -> Effect {
+        self.waiting_token = None;
+        self.clear_busy();
+        self.open_media(document, true, registry);
+        if !matches!(self.phase, Phase::Transitioning { .. }) {
+            self.warm_token = Some(token);
+            self.touch_preload();
+        }
+        self.after_show()
+    }
+
+    fn finish_prepared(
+        &mut self,
+        token: u64,
+        result: Result<Document, String>,
+        registry: &TransitionRegistry,
+    ) -> Effect {
+        let Some(index) = self.prepared.iter().position(|slot| slot.token == token) else {
             return Effect::None;
         };
-        self.highlight_path(&path);
-        self.reveal_place(Instant::now());
-        self.begin_load(path, true)
+        match result {
+            Ok(document) => {
+                if self.waiting_token == Some(token) {
+                    self.prepared.remove(index);
+                    self.touch_preload();
+                    self.adopt_prepared(token, document, registry)
+                } else {
+                    self.prepared[index].document = Some(document);
+                    self.touch_preload();
+                    Effect::None
+                }
+            }
+            Err(message) => {
+                self.prepared.remove(index);
+                self.touch_preload();
+                if self.waiting_token == Some(token) {
+                    self.waiting_token = None;
+                    self.clear_busy();
+                    tracing::warn!(%message, "could not open the file");
+                    self.message = Some(message);
+                }
+                Effect::None
+            }
+        }
     }
 
     fn highlight_path(&mut self, path: &Path) {
@@ -907,6 +1148,7 @@ impl AppState {
     }
 
     fn install_document(&mut self, mut document: Document) {
+        self.remember_shown();
         if let Document::Video(video) = &mut document {
             self.image_generation += 1;
             video.token = self.image_generation;
@@ -946,6 +1188,7 @@ impl AppState {
         self.loop_drag = None;
         self.scrub_drag = false;
         self.reveal_place(Instant::now());
+        self.warm_token = None;
         self.bump_anim();
     }
 
@@ -968,6 +1211,10 @@ impl AppState {
         self.loop_drag = None;
         self.scrub_drag = false;
         self.scroll_action = Some(ScrollAction::Reveal);
+        self.prepared.clear();
+        self.waiting_token = None;
+        self.warm_token = None;
+        self.touch_preload();
         self.bump_anim();
     }
 
@@ -1512,7 +1759,12 @@ impl AppState {
                 if let Some(path) = self.pending_file.take() {
                     self.highlight_path(&path);
                 }
-                Effect::None
+                let jobs = self.queue_neighbours();
+                if jobs.is_empty() {
+                    Effect::None
+                } else {
+                    Effect::Prepare(jobs)
+                }
             }
             Note::Folder(Err(message)) => {
                 tracing::warn!(%message, "could not list the folder");
@@ -1533,7 +1785,7 @@ impl AppState {
                     Ok(document) => {
                         let navigation = self.pending_navigation;
                         self.open_media(document, navigation, registry);
-                        Effect::SyncVideo
+                        self.after_show()
                     }
                     Err(message) => {
                         tracing::warn!(%message, "could not open the file");
@@ -1545,6 +1797,8 @@ impl AppState {
                     }
                 }
             }
+            Note::Prepared { token, result } => self.finish_prepared(token, result, registry),
+            Note::Adopt { token, document } => self.adopt_prepared(token, document, registry),
             Note::Transformed { ticket, result } => self.finish_frames(ticket, result),
             Note::Preview { ticket, image } => {
                 if ticket == self.preview_ticket {
@@ -2395,6 +2649,69 @@ mod tests {
             previous,
             Effect::LoadFile { ref path, .. } if path.ends_with("a.png")
         ));
+    }
+
+    #[test]
+    fn a_prepared_neighbour_opens_without_reading_the_file_again() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.folder = folder();
+        state.folder.entries.push(Entry {
+            path: PathBuf::from("/pictures/c.png"),
+            kind: EntryKind::Image,
+            label: "c".into(),
+        });
+        state.document = Some(image_doc("/pictures/b.png"));
+        let jobs = state.queue_neighbours();
+        let paths: Vec<_> = jobs.iter().map(|(_, path)| path.clone()).collect();
+        assert!(paths.iter().any(|path| path.ends_with("a.png")));
+        assert!(paths.iter().any(|path| path.ends_with("c.png")));
+        let next = image_doc("/pictures/c.png");
+        let token = jobs
+            .iter()
+            .find(|(_, path)| path.ends_with("c.png"))
+            .map(|(token, _)| *token)
+            .unwrap_or(0);
+        let ready = state.handle_note(
+            Note::Prepared {
+                token,
+                result: Ok(next),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert!(matches!(ready, Effect::None));
+        assert!(state.warm_urls().iter().any(|url| url.contains(&token.to_string())));
+        let effect = state.dispatch(Command::Next, Instant::now());
+        assert!(matches!(effect, Effect::UsePrepared { token: got, .. } if got == token));
+        let adopted = state.handle_note(
+            Note::Adopt {
+                token,
+                document: image_doc("/pictures/c.png"),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert_eq!(
+            state.document.as_ref().map(Document::path),
+            Some(Path::new("/pictures/c.png"))
+        );
+        assert_eq!(state.warm_token(), Some(token));
+        assert!(state.image_url().starts_with(&format!("app://near/{token}/")));
+        assert!(matches!(adopted, Effect::SyncVideo));
+        let back = state.dispatch(
+            Command::Previous,
+            Instant::now() + Duration::from_millis(30),
+        );
+        assert!(matches!(back, Effect::UsePrepared { .. }));
+        state.return_to_browser();
+        let ignored = state.handle_note(
+            Note::Prepared {
+                token,
+                result: Ok(image_doc("/pictures/a.png")),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert!(matches!(ignored, Effect::None));
+        assert!(state.document.is_none());
     }
 
     #[test]

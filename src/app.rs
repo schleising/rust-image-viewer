@@ -28,7 +28,8 @@ img, button, .label, .stage { -webkit-user-select: none; user-select: none; -web
 .thumb-error { font-size: 11px; padding: 4px; }
 .label { white-space: nowrap; overflow: hidden; }
 .stage { position: relative; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: light-dark(#aeaeac, #101010); touch-action: none; }
-.frame, video { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; background: transparent; }
+.frame, video, .preload { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; pointer-events: none; will-change: transform; background: transparent; }
+.preload { position: absolute; left: -10000px; top: 0; width: 8px; height: 8px; opacity: 0; }
 .selection { position: absolute; z-index: 4; box-sizing: border-box; background: rgba(30, 144, 255, 0.5); border: 1px solid rgb(30, 144, 255); pointer-events: none; }
 .scrubber { position: absolute; z-index: 6; left: 84px; right: 84px; bottom: 90px; padding: 12px 16px 10px; border-radius: 12px; background: rgba(0, 0, 0, 0.38); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 6px 18px rgba(0, 0, 0, 0.18); pointer-events: none; overflow: visible; opacity: 0; transition: opacity 240ms ease; }
 .scrubber.shown { opacity: 1; }

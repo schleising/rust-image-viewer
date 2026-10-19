@@ -285,7 +285,7 @@ src/
 ```toml
 [package]
 name = "image-viewer"
-version = "1.0.4"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Steve"]
@@ -660,6 +660,8 @@ else:
 
 A later crossfade is a CSS opacity animation between the two image layers that are already mounted. It does not re-decode. Those two layers already hold the previous picture until the next one has loaded; that hold is not a transition. A later procedural transition (wipe, blend) adds `frame(&RgbaImage, &RgbaImage, t: f32) -> RgbaImage` and the stage serves those frames through the same protocol. Video and folder changes stay hard cuts.
 
+While a picture is on screen, the previous and next image files in the folder order are decoded in the background and requested by hidden images, so a step does not wait on disk. A neighbour that is a video is left until it is opened. Stepping onto a picture that has already been decoded installs that document at once and serves it from the address the hidden image already loaded (`app://near/{token}/f/{frame}`). Going back reuses the picture just left when it has no unsaved edit.
+
 While a transition runs, Next and Previous are ignored.
 
 ## 8. Browser and stage
@@ -881,7 +883,7 @@ if compgen -G "$ROOT/assets/models/*.onnx" > /dev/null; then
   cp "$ROOT/assets/models/"*.onnx "$RES/models/"
 fi
 
-# cargo pkgid is `path+file:///…/image-viewer#1.0.4` (or older `…@1.0.4`).
+# cargo pkgid is `path+file:///…/image-viewer#1.1.0` (or older `…@1.1.0`).
 pkgid="$(cargo pkgid -p image-viewer)"
 APP_VERSION="${pkgid##*#}"
 APP_VERSION="${APP_VERSION##*@}"
@@ -1040,7 +1042,7 @@ Core tests do not open a window. They implement the formulas in this document ag
 - Denoise: a small fixture with a recorded output, so later edits do not drift.
 - FSRCNN: upscale an 8×8 colour image by 4. The corners keep their alpha, and a flat colour stays within 24 levels. If the model file is missing, the error says so.
 - Video thumbnail time: 15% of a real duration, and the seek window stays near that point. A further test builds a short clip with ffmpeg, when ffmpeg is installed, and checks that the grabbed frame is the one from 15% of the way through, right way up. If ffmpeg is not installed, that test passes without checking a frame. The application itself does not call ffmpeg.
-- Navigator: `Cut` swaps immediately. A test double with `applies == true` records `Transitioning` and ignores a second Next while it runs. Opening a file path shows the viewer before the folder listing arrives. A shown video stays up across pause and across the load of the next video. The visible picture stays until the next one has loaded.
+- Navigator: `Cut` swaps immediately. A test double with `applies == true` records `Transitioning` and ignores a second Next while it runs. Opening a file path shows the viewer before the folder listing arrives. A shown video stays up across pause and across the load of the next video. The visible picture stays until the next one has loaded. A decoded neighbour opens without another file read, and the picture just left is ready for the step back.
 
 Manual pass on `/Applications/Image Viewer.app` after `scripts/install-app.sh`:
 

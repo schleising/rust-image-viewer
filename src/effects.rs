@@ -20,9 +20,18 @@ pub fn run(mut state: Signal<AppState>, window: DesktopContext, effect: Effect) 
                 focus_page(&window);
             }
         }
-        Effect::SyncVideo => {
-            let next = state.read().video_epoch.wrapping_add(1);
-            state.write().video_epoch = next;
+        Effect::SyncVideo => sync_video_epoch(&mut state),
+        Effect::Prepare(jobs) => {
+            sync_video_epoch(&mut state);
+            for (token, path) in jobs {
+                wake::spawn_blocking(move || {
+                    let result = document::load(&path).map_err(|error| error.message);
+                    wake::post(Note::Prepared { token, result });
+                });
+            }
+        }
+        Effect::UsePrepared { token, document } => {
+            wake::post(Note::Adopt { token, document });
         }
         Effect::FocusPage => focus_page(&window),
         Effect::ListFolder(path) => {
@@ -158,6 +167,11 @@ fn adjust_each(frames: &[AnimFrame], params: &Params) -> Result<Vec<AnimFrame>, 
         });
     }
     Ok(next)
+}
+
+fn sync_video_epoch(state: &mut Signal<AppState>) {
+    let next = state.read().video_epoch.wrapping_add(1);
+    state.write().video_epoch = next;
 }
 
 pub(crate) fn focus_page(window: &DesktopContext) {

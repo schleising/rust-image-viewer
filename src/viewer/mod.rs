@@ -82,6 +82,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
     let back_style = frame_style(view_size, &back, !show_front && !cover_stills);
     let front_src = frame_src(&front_url);
     let back_src = frame_src(&back_url);
+    let warms = state.read().warm_urls();
     rsx! {
         div {
             id: "stage",
@@ -207,6 +208,9 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                 src: "{front_src}",
                 style: "{front_style}",
                 onload: move |_| reveal_loaded(&mut state, &front_load),
+            }
+            for src in warms {
+                img { key: "{src}", class: "preload", src: "{src}" }
             }
             if let Some((token, style)) = front_video.zip(front_video_style) {
                 { video_slot(state, "front", token, style, player_paused, player_muted) }

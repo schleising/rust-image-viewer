@@ -33,6 +33,9 @@ struct Store {
     video: HashMap<u64, PathBuf>,
     thumbs: HashMap<(u64, usize, u32), Thumb>,
     encoded: HashMap<(u64, usize, u64), (Vec<u8>, &'static str)>,
+    near: HashMap<u64, Arc<[AnimFrame]>>,
+    near_encoded: HashMap<(u64, usize), (Vec<u8>, &'static str)>,
+    preload_epoch: u64,
 }
 
 static STORE: std::sync::LazyLock<Mutex<Store>> = std::sync::LazyLock::new(|| {
@@ -47,6 +50,9 @@ static STORE: std::sync::LazyLock<Mutex<Store>> = std::sync::LazyLock::new(|| {
         video: HashMap::new(),
         thumbs: HashMap::new(),
         encoded: HashMap::new(),
+        near: HashMap::new(),
+        near_encoded: HashMap::new(),
+        preload_epoch: 0,
     })
 });
 
@@ -60,12 +66,14 @@ pub fn publish(state: &AppState) {
     let frame = state.frame_index;
     let folder_gen = state.folder_generation;
     let has_preview = state.preview.is_some();
+    let preload_epoch = state.preload_epoch;
     let mut store = wake::lock(&*STORE);
     if store.image_gen == generation
         && store.frame == frame
         && store.preview_ticket == ticket
         && store.folder_gen == folder_gen
         && store.preview.is_some() == has_preview
+        && store.preload_epoch == preload_epoch
     {
         return;
     }
@@ -85,6 +93,8 @@ pub fn publish(state: &AppState) {
     if let Some(video) = state.video() {
         store.video.insert(video.token, video.path.clone());
     }
+    store.preload_epoch = preload_epoch;
+    refresh_near(&mut store, state);
     store
         .thumbs
         .retain(|(gen, _, _), _| *gen == state.folder_generation);
@@ -141,6 +151,9 @@ pub fn handle(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     }
     if let Some(token) = path.strip_prefix("/video/") {
         return video_response(token, request.headers().get(http::header::RANGE));
+    }
+    if let Some(spec) = path.strip_prefix("/near/") {
+        return near_response(spec);
     }
     empty(404)
 }
@@ -220,6 +233,60 @@ fn image_response(spec: &str) -> Response<Cow<'static, [u8]>> {
             wake::lock(&*STORE)
                 .encoded
                 .insert(cache_key, (bytes.clone(), mime));
+            bytes_response(200, mime, bytes, &[])
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not encode the frame");
+            empty(500)
+        }
+    }
+}
+
+fn refresh_near(store: &mut Store, state: &crate::state::AppState) {
+    let mut near = HashMap::new();
+    if let Some(token) = state.warm_token() {
+        if let Some(frames) = state.image().map(|image| Arc::clone(&image.frames)) {
+            near.insert(token, frames);
+        }
+    }
+    for (token, frames) in state.near_frames() {
+        near.insert(token, frames);
+    }
+    store
+        .near_encoded
+        .retain(|(token, _), _| near.contains_key(token));
+    store.near = near;
+}
+
+fn near_response(spec: &str) -> Response<Cow<'static, [u8]>> {
+    let mut parts = spec.split('/');
+    let Some(token) = parts.next().and_then(|text| text.parse().ok()) else {
+        return empty(404);
+    };
+    let frame = match (parts.next(), parts.next()) {
+        (Some("f"), Some(text)) => text.parse().unwrap_or(0),
+        _ => 0,
+    };
+    let cached = wake::lock(&*STORE)
+        .near_encoded
+        .get(&(token, frame))
+        .map(|(bytes, mime)| (bytes.clone(), *mime));
+    if let Some((bytes, mime)) = cached {
+        return bytes_response(200, mime, bytes, &[]);
+    }
+    let image = wake::lock(&*STORE)
+        .near
+        .get(&token)
+        .and_then(|frames| frames.get(frame))
+        .map(|item| Arc::clone(&item.image));
+    let Some(image) = image else {
+        return empty(404);
+    };
+    match document::encode_for_view(&image, false) {
+        Ok((bytes, mime)) => {
+            wake::lock(&*STORE)
+                .near_encoded
+                .insert((token, frame), (bytes.clone(), mime));
             bytes_response(200, mime, bytes, &[])
         }
         Err(error) => {

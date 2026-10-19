@@ -12,6 +12,14 @@ pub enum Note {
         ticket: u64,
         result: Result<Document, String>,
     },
+    Prepared {
+        token: u64,
+        result: Result<Document, String>,
+    },
+    Adopt {
+        token: u64,
+        document: Document,
+    },
     Transformed {
         ticket: u64,
         result: Result<Vec<AnimFrame>, String>,
