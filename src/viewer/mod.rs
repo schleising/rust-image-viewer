@@ -363,11 +363,7 @@ fn reveal_loaded(state: &mut Signal<AppState>, url: &str) {
     if url.is_empty() || url.starts_with("data:") {
         return;
     }
-    let reveal = state.read().reveal_would_change(url);
-    let slide = state.read().slide_is_waiting_on(url);
-    if reveal || slide {
-        state.write().reveal_frame(url);
-    }
+    state.write().note_frame_loaded(url);
 }
 
 fn layer_class(on_top: bool, blending: bool, from_right: bool) -> &'static str {

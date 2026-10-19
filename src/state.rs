@@ -175,6 +175,8 @@ pub struct AppState {
     pub show_front: bool,
     pub front: FrameLayer,
     pub back: FrameLayer,
+    front_loaded: bool,
+    back_loaded: bool,
     prepared: Vec<NearSlot>,
     preload_token: u64,
     pub preload_epoch: u64,
@@ -325,6 +327,8 @@ impl AppState {
             show_front: true,
             front: FrameLayer::blank(),
             back: FrameLayer::blank(),
+            front_loaded: false,
+            back_loaded: false,
             prepared: Vec::new(),
             preload_token: 0,
             preload_epoch: 0,
@@ -460,13 +464,30 @@ impl AppState {
             let visible_stale = self.desired_frame().is_some_and(|desired| {
                 (visible.url.is_empty() || visible.url == desired.url) && visible != &desired
             });
+            let hidden_loaded = if self.show_front {
+                self.back_loaded
+            } else {
+                self.front_loaded
+            };
             let ready = matches!(self.phase, Phase::Transitioning { started: None, .. })
-                && hidden.url == incoming.url;
+                && hidden.url == incoming.url
+                && hidden_loaded;
             return hidden != &incoming || visible_stale || ready;
         }
         let Some(desired) = self.desired_frame() else {
             return false;
         };
+        let on_front = self.front.url == desired.url && self.front_loaded;
+        let on_back = self.back.url == desired.url && self.back_loaded;
+        if self.show_front && on_front {
+            return self.front != desired;
+        }
+        if !self.show_front && on_back {
+            return self.back != desired;
+        }
+        if on_front || on_back {
+            return true;
+        }
         let visible = if self.show_front {
             &self.front
         } else {
@@ -494,33 +515,73 @@ impl AppState {
         let Some(desired) = self.desired_frame() else {
             return;
         };
-        let visible = if self.show_front {
-            &self.front
-        } else {
-            &self.back
-        };
-        if visible.url.is_empty() || visible.url == desired.url {
-            if visible != &desired {
-                if self.show_front {
-                    self.front = desired;
-                } else {
-                    self.back = desired;
-                }
-            }
+        if self.show_resident(&desired) {
             return;
         }
-        let hidden = if self.show_front {
-            &self.back
+        let visible_url = if self.show_front {
+            self.front.url.clone()
         } else {
-            &self.front
+            self.back.url.clone()
         };
-        if hidden != &desired {
-            if self.show_front {
-                self.back = desired;
-            } else {
-                self.front = desired;
-            }
+        if visible_url.is_empty() || visible_url == desired.url {
+            self.assign_visible(desired);
+            return;
         }
+        self.assign_hidden(desired);
+    }
+
+    fn show_resident(&mut self, desired: &FrameLayer) -> bool {
+        let on_front = self.front.url == desired.url && self.front_loaded;
+        let on_back = self.back.url == desired.url && self.back_loaded;
+        if self.show_front && on_front {
+            self.assign_front(desired.clone());
+            return true;
+        }
+        if !self.show_front && on_back {
+            self.assign_back(desired.clone());
+            return true;
+        }
+        if on_front {
+            self.assign_front(desired.clone());
+            self.show_front = true;
+            return true;
+        }
+        if on_back {
+            self.assign_back(desired.clone());
+            self.show_front = false;
+            return true;
+        }
+        false
+    }
+
+    fn assign_visible(&mut self, layer: FrameLayer) {
+        if self.show_front {
+            self.assign_front(layer);
+        } else {
+            self.assign_back(layer);
+        }
+    }
+
+    fn assign_hidden(&mut self, layer: FrameLayer) {
+        if self.show_front {
+            self.assign_back(layer);
+        } else {
+            self.assign_front(layer);
+        }
+    }
+
+    fn assign_front(&mut self, layer: FrameLayer) {
+        if self.front.url != layer.url {
+            self.front_loaded = false;
+        }
+        self.front = layer;
+    }
+
+    fn assign_back(&mut self, layer: FrameLayer) {
+        if self.back.url != layer.url {
+            self.back_loaded = false;
+        }
+        self.back = layer;
     }
 
     pub fn reveal_would_change(&self, url: &str) -> bool {
@@ -538,10 +599,21 @@ impl AppState {
             || (self.video().is_none() && !self.video_layer.url.is_empty())
     }
 
+    pub fn note_frame_loaded(&mut self, url: &str) {
+        if url.is_empty() {
+            return;
+        }
+        if self.front.url == url {
+            self.front_loaded = true;
+        }
+        if self.back.url == url {
+            self.back_loaded = true;
+        }
+        self.reveal_frame(url);
+    }
+
     pub fn reveal_frame(&mut self, url: &str) {
-        if self.incoming.as_ref().is_some_and(|item| item.url == url)
-            && matches!(self.phase, Phase::Transitioning { started: None, .. })
-        {
+        if self.slide_is_waiting_on(url) {
             self.begin_ease(Instant::now());
             return;
         }
@@ -578,12 +650,13 @@ impl AppState {
         let Some(incoming) = self.incoming_layer() else {
             return;
         };
-        let hidden_url = if self.show_front {
-            self.back.url.clone()
+        let (hidden_url, hidden_loaded) = if self.show_front {
+            (self.back.url.clone(), self.back_loaded)
         } else {
-            self.front.url.clone()
+            (self.front.url.clone(), self.front_loaded)
         };
         let ready = hidden_url == incoming.url
+            && hidden_loaded
             && matches!(self.phase, Phase::Transitioning { started: None, .. });
         let update_visible = self.desired_frame().is_some_and(|desired| {
             let visible = if self.show_front {
@@ -595,18 +668,10 @@ impl AppState {
         });
         if update_visible {
             if let Some(desired) = self.desired_frame() {
-                if self.show_front {
-                    self.front = desired;
-                } else {
-                    self.back = desired;
-                }
+                self.assign_visible(desired);
             }
         }
-        if self.show_front {
-            self.back = incoming;
-        } else {
-            self.front = incoming;
-        }
+        self.assign_hidden(incoming);
         if ready {
             self.begin_ease(Instant::now());
         }
@@ -1451,6 +1516,8 @@ impl AppState {
         self.show_front = true;
         self.front = FrameLayer::blank();
         self.back = FrameLayer::blank();
+        self.front_loaded = false;
+        self.back_loaded = false;
         self.clear_video_slots();
         self.place_visible = false;
         self.place_until = None;
@@ -2716,6 +2783,7 @@ mod tests {
         assert!(!state.open_media(image_doc("/pictures/c.png"), true, &registry));
         assert!(!state.ease_due(Instant::now()));
         state.sync_display();
+        assert!(!state.blending());
         let hidden = if state.show_front {
             state.back.url.clone()
         } else {
@@ -2753,6 +2821,7 @@ mod tests {
         state.front.size = Some((2, 2));
         state.back.url = "app://near/7/f/0".into();
         state.back.size = Some((2, 2));
+        state.back_loaded = true;
         state.blend_token = Some(7);
         state.nav_delta = -1;
         let registry = TransitionRegistry::builtin();
@@ -2775,6 +2844,33 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_resident_picture_is_shown_without_another_key() {
+        let mut state = AppState::new();
+        state.mode = Mode::Viewer;
+        state.view_size = (800.0, 600.0);
+        state.folder = folder();
+        state.transition = TransitionId::new("cut");
+        state.document = Some(image_doc("/pictures/b.png"));
+        state.warm_token = Some(4);
+        state.show_front = true;
+        state.front.url = "app://near/4/f/0".into();
+        state.front.size = Some((2, 2));
+        state.front_loaded = true;
+        state.back.url = "app://near/7/f/0".into();
+        state.back.size = Some((2, 2));
+        state.back_loaded = true;
+        let registry = TransitionRegistry::builtin();
+        assert!(state.open_media(image_doc("/pictures/a.png"), true, &registry));
+        assert!(matches!(state.phase, Phase::Idle));
+        state.warm_token = Some(7);
+        assert!(state.image_url().starts_with("app://near/7/"));
+        state.sync_display();
+        assert!(!state.show_front);
+        assert_eq!(state.back.url, "app://near/7/f/0");
+        assert!(state.back_loaded);
     }
 
     #[test]
