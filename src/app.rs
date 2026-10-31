@@ -125,6 +125,7 @@ pub fn app() -> Element {
                         restore_keyboard(&window, &mut state);
                     }
                     WindowEvent::Focused(true) => restore_keyboard(&window, &mut state),
+                    WindowEvent::Focused(false) => state.write().set_control_held(false),
                     _ => {}
                 }
             }
@@ -207,6 +208,11 @@ pub fn app() -> Element {
                 );
             },
             onkeydown: move |event| on_key(state, window_keys.clone(), event),
+            onkeyup: move |event| {
+                if matches!(event.code(), Code::ControlLeft | Code::ControlRight) {
+                    state.write().set_control_held(false);
+                }
+            },
             if mode == Mode::Browser {
                 {crate::browser::view(state, window.clone())}
             } else {
@@ -271,6 +277,10 @@ fn on_key(
         return;
     }
     if state.read().dialog.is_some() || state.read().long_operation() {
+        return;
+    }
+    if matches!(code, Code::ControlLeft | Code::ControlRight) {
+        state.write().set_control_held(true);
         return;
     }
     let meta = modifiers.contains(Modifiers::META);

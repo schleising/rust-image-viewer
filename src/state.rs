@@ -166,6 +166,9 @@ pub struct AppState {
     pub place_visible: bool,
     place_until: Option<Instant>,
     pub drag: Option<Drag>,
+    pointer: Option<(f64, f64)>,
+    control_held: bool,
+    control_selection: Option<ControlSelection>,
     pub loop_drag: Option<LoopEnd>,
     pub scrub_drag: bool,
     pub precise_seek: bool,
@@ -202,6 +205,11 @@ pub struct Drag {
     pub control: bool,
     pub origin: (f64, f64),
     pub fitted: bool,
+}
+
+struct ControlSelection {
+    anchor: (f64, f64),
+    previous: Option<PixelRect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,6 +327,9 @@ impl AppState {
             place_visible: false,
             place_until: None,
             drag: None,
+            pointer: None,
+            control_held: false,
+            control_selection: None,
             loop_drag: None,
             scrub_drag: false,
             precise_seek: false,
@@ -1510,6 +1521,7 @@ impl AppState {
         self.opened_at = Some(Instant::now());
         self.message = None;
         self.scrub_visible = false;
+        self.control_selection = None;
         self.loop_drag = None;
         self.scrub_drag = false;
         self.reveal_place(Instant::now());
@@ -1535,6 +1547,7 @@ impl AppState {
         self.clear_video_slots();
         self.place_visible = false;
         self.place_until = None;
+        self.control_selection = None;
         self.loop_drag = None;
         self.scrub_drag = false;
         self.scroll_action = Some(ScrollAction::Reveal);
@@ -2347,8 +2360,22 @@ impl AppState {
         Effect::None
     }
 
+    pub fn set_control_held(&mut self, held: bool) {
+        if self.control_held == held {
+            return;
+        }
+        self.control_held = held;
+        if !held {
+            self.finish_control_selection();
+        }
+    }
+
     pub fn pointer_down(&mut self, at: (f64, f64), control: bool) {
+        self.pointer = Some(at);
         if self.mode != Mode::Viewer || self.dialog.is_some() {
+            return;
+        }
+        if self.control_held || self.control_selection.is_some() {
             return;
         }
         self.drag = Some(Drag {
@@ -2360,7 +2387,33 @@ impl AppState {
         });
     }
 
-    pub fn pointer_move(&mut self, at: (f64, f64)) {
+    pub fn pointer_move(&mut self, at: (f64, f64), control: bool) {
+        let previous = self.pointer;
+        self.pointer = Some(at);
+        if self.drag.is_some() {
+            self.follow_drag(at);
+            return;
+        }
+        let selecting = (control || self.control_held)
+            && self.mode == Mode::Viewer
+            && self.dialog.is_none()
+            && !self.long_operation();
+        if selecting {
+            if self.control_selection.is_none() {
+                self.control_selection = Some(ControlSelection {
+                    anchor: previous.unwrap_or(at),
+                    previous: self.viewport.selection,
+                });
+            }
+            self.paint_control_selection(at);
+            return;
+        }
+        if self.control_selection.is_some() {
+            self.finish_control_selection();
+        }
+    }
+
+    fn follow_drag(&mut self, at: (f64, f64)) {
         let Some(drag) = self.drag.as_ref() else {
             return;
         };
@@ -2382,7 +2435,42 @@ impl AppState {
         }
     }
 
+    fn paint_control_selection(&mut self, at: (f64, f64)) {
+        let Some(anchor) = self.control_selection.as_ref().map(|gesture| gesture.anchor) else {
+            return;
+        };
+        let Some(size) = self.pixel_size() else {
+            return;
+        };
+        self.viewport.selection =
+            self.viewport
+                .selection_from_drag(self.view_size, size, anchor, at);
+    }
+
+    fn finish_control_selection(&mut self) {
+        let Some(gesture) = self.control_selection.take() else {
+            return;
+        };
+        let Some(at) = self.pointer else {
+            self.viewport.selection = gesture.previous;
+            return;
+        };
+        let moved = (at.0 - gesture.anchor.0).hypot(at.1 - gesture.anchor.1) >= CLICK_SLOP;
+        if !moved {
+            self.viewport.selection = gesture.previous;
+            return;
+        }
+        let Some(size) = self.pixel_size() else {
+            self.viewport.selection = gesture.previous;
+            return;
+        };
+        self.viewport.selection =
+            self.viewport
+                .selection_from_drag(self.view_size, size, gesture.anchor, at);
+    }
+
     pub fn pointer_up(&mut self, at: (f64, f64)) {
+        self.pointer = Some(at);
         let Some(drag) = self.drag.take() else {
             return;
         };
@@ -2452,6 +2540,7 @@ mod tests {
     use crate::catalog::{Entry, EntryKind};
     use crate::document::{AnimFrame, Document, ImageDocument, ImageMetadata, Loop, VideoDocument};
     use crate::transitions::{ImageTransition, TransitionRegistry, TransitionStyle};
+    use crate::viewport::PixelRect;
     use image::{Rgba, RgbaImage};
     use std::time::Duration;
 
@@ -3340,18 +3429,77 @@ mod tests {
         state.viewport.translation = (12.0, 8.0);
         state.viewport.fitted = true;
         state.pointer_down((10.0, 10.0), false);
-        state.pointer_move((18.0, 14.0));
+        state.pointer_move((18.0, 14.0), false);
         assert_eq!(state.viewport.translation, (20.0, 12.0));
         assert!(!state.viewport.fitted);
         state.pointer_up((18.0, 14.0));
         assert_eq!(state.viewport.translation, (20.0, 12.0));
 
         state.pointer_down((10.0, 10.0), false);
-        state.pointer_move((11.0, 10.0));
+        state.pointer_move((11.0, 10.0), false);
         assert_eq!(state.viewport.translation, (21.0, 12.0));
         state.pointer_up((11.0, 10.0));
         assert_eq!(state.viewport.translation, (20.0, 12.0));
         assert!(!state.viewport.fitted);
+    }
+
+    #[test]
+    fn holding_control_and_moving_selects_without_a_click() {
+        let mut state = fitted_picture();
+        let kept = PixelRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        state.viewport.selection = Some(kept);
+        state.pointer_move((10.0, 10.0), false);
+        state.set_control_held(true);
+        state.pointer_move((12.0, 11.0), false);
+        state.set_control_held(false);
+        assert_eq!(state.viewport.selection, Some(kept));
+        assert!(state.viewport.fitted);
+
+        state.pointer_move((10.0, 10.0), false);
+        state.set_control_held(true);
+        state.pointer_down((10.0, 10.0), true);
+        state.pointer_move((50.0, 40.0), false);
+        state.pointer_up((50.0, 40.0));
+        assert!(state.drag.is_none());
+        assert!(state.viewport.fitted);
+        assert_eq!(
+            state.viewport.selection,
+            Some(PixelRect {
+                x: 5,
+                y: 5,
+                width: 20,
+                height: 15,
+            })
+        );
+        state.set_control_held(false);
+        assert_eq!(
+            state.viewport.selection,
+            Some(PixelRect {
+                x: 5,
+                y: 5,
+                width: 20,
+                height: 15,
+            })
+        );
+    }
+
+    #[test]
+    fn a_click_without_control_clears_the_selection() {
+        let mut state = fitted_picture();
+        state.viewport.selection = Some(PixelRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        });
+        state.pointer_down((10.0, 10.0), false);
+        state.pointer_up((11.0, 11.0));
+        assert!(state.viewport.selection.is_none());
     }
 
     #[test]
@@ -3486,6 +3634,17 @@ mod tests {
         assert!(matches!(late, Effect::None));
         assert!(!state.is_dirty());
         Ok(())
+    }
+
+    fn fitted_picture() -> AppState {
+        let mut state = viewing_picture();
+        if let Some(image) = state.image_mut() {
+            image.metadata.width = 100;
+            image.metadata.height = 50;
+        }
+        state.view_size = (200.0, 100.0);
+        state.viewport.refit(state.view_size, (100, 50));
+        state
     }
 
     fn viewing_picture() -> AppState {

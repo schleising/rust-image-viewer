@@ -97,7 +97,7 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
             class: "stage",
             onmounted: move |_| {
                 dioxus::document::eval(
-                    "(() => { const stage = document.getElementById('stage'); if (!stage || stage.dataset.capture) return; stage.dataset.capture = '1'; stage.addEventListener('wheel', (event) => event.preventDefault(), { passive: false }); stage.addEventListener('pointerdown', (event) => { if (event.button === 0) stage.setPointerCapture(event.pointerId); }); })()",
+                    "(() => { const stage = document.getElementById('stage'); if (!stage || stage.dataset.capture) return; stage.dataset.capture = '1'; stage.addEventListener('wheel', (event) => event.preventDefault(), { passive: false }); stage.addEventListener('contextmenu', (event) => event.preventDefault()); stage.addEventListener('pointerdown', (event) => { if (event.button === 0) stage.setPointerCapture(event.pointerId); }); })()",
                 );
             },
             onwheel: move |event| {
@@ -168,7 +168,8 @@ pub fn view(mut state: Signal<AppState>, window: DesktopContext) -> Element {
                     });
                     return;
                 }
-                state.write().pointer_move((point.x, point.y));
+                let control = event.data().modifiers().contains(Modifiers::CONTROL);
+                state.write().pointer_move((point.x, point.y), control);
                 state.write().reveal_place(std::time::Instant::now());
                 if state.read().playback_clock().is_some() {
                     let token = state.write().poke_scrub();
