@@ -1638,6 +1638,9 @@ impl AppState {
         }
         self.animation_paused = false;
         self.animation_done = false;
+        // The warm address still serves the picture from before this edit.
+        // Keeping it would draw that picture into the edited size.
+        self.warm_token = None;
         self.image_generation += 1;
         self.bump_anim();
     }
@@ -3500,6 +3503,29 @@ mod tests {
         state.pointer_down((10.0, 10.0), false);
         state.pointer_up((11.0, 11.0));
         assert!(state.viewport.selection.is_none());
+    }
+
+    #[test]
+    fn a_crop_of_a_warmed_picture_shows_the_cropped_frame() {
+        let mut state = viewing_picture();
+        state.warm_token = Some(4);
+        state.image_generation = 3;
+        assert_eq!(state.image_url(), "app://near/4/f/0");
+        let cropped = vec![AnimFrame {
+            image: Arc::new(RgbaImage::from_pixel(1, 2, Rgba([9, 9, 9, 255]))),
+            delay: Duration::ZERO,
+        }];
+        let effect = state.handle_note(
+            Note::Transformed {
+                ticket: 0,
+                result: Ok(cropped),
+            },
+            &TransitionRegistry::builtin(),
+        );
+        assert!(matches!(effect, Effect::None));
+        assert!(state.warm_token().is_none());
+        assert_eq!(state.image_url(), "app://image/g/4/f/0/p/0");
+        assert_eq!(state.pixel_size(), Some((1, 2)));
     }
 
     #[test]
